@@ -77,6 +77,7 @@ class RAGService:
             mode=settings.retrieval_mode,
             candidates_k=settings.candidates_k,
             top_k=settings.top_k,
+            expand_queries=settings.query_expansion,
         )
         self.guardrails = Guardrails(settings, self.guard_llm) if settings.guardrails_enabled else None
         self.access = (

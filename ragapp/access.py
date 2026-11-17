@@ -27,8 +27,12 @@ from pathlib import Path
 _LABEL = r"(PUBLIC|INTERNAL|(?:CONFIDENTIAL|RESTRICTED)(?::[A-Za-z][A-Za-z0-9_-]*)?)"
 # "Classification: CONFIDENTIAL:HR | Record ..."  or a title line "RESTRICTED:Security — Secret canaries".
 # Upper-case on purpose: the word "Restricted" in prose or a bare table cell "PUBLIC" is not a label.
+# Markdown from Docling may add "## " or bold: "## CONFIDENTIAL:HR — ...", "**Classification:** INTERNAL".
+_MD = r"(?:#{1,6}[ \t]+)?(?:\*\*|__)?"
+_END = r"(?:\*\*|__)?"
 LABEL_LINE = re.compile(
-    rf"^[ \t]*(?:Classification[ \t]*:[ \t]*{_LABEL}|{_LABEL}[ \t]+[—–-][ \t]+\S)", re.MULTILINE
+    rf"^[ \t]*{_MD}(?:Classification{_END}[ \t]*:{_END}[ \t]*{_LABEL}|{_LABEL}{_END}[ \t]+[—–-][ \t]+\S)",
+    re.MULTILINE,
 )
 LEVELS = {"PUBLIC": 0, "INTERNAL": 1, "CONFIDENTIAL": 2, "RESTRICTED": 3}
 

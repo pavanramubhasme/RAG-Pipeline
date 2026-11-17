@@ -52,7 +52,7 @@ def create_app(
         app.state.service.close()
         obs.shutdown_tracing()  # flush spans
 
-    app = FastAPI(title="RAG Showcase v5", version=__version__, lifespan=lifespan)
+    app = FastAPI(title="RAG Showcase v6", version=__version__, lifespan=lifespan)
 
     @app.middleware("http")
     async def request_context(request: Request, call_next):

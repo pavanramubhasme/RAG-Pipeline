@@ -1,8 +1,10 @@
-# RAG Showcase v5 — secure agentic RAG with LangChain, LangGraph, MCP, RAGAS and OpenTelemetry
+# RAG Showcase v6 — secure agentic RAG with LangChain, LangGraph, MCP, RAGAS and OpenTelemetry
 
 Ask questions about your documents and get grounded, cited answers, or an honest *"I don't know"*. Every model is free and open source and runs on your machine: no API keys, no data leaves the laptop.
 
-**Step-by-step setup: [docs/SETUP.md](docs/SETUP.md)** · Interview guide: [docs/INTERVIEW.md](docs/INTERVIEW.md)
+**Step-by-step setup: [docs/SETUP.md](docs/SETUP.md)**
+
+**What's new in v6: layout-aware PDF parsing.** PDFs are read with IBM Docling (layout + table models, local, MIT): every page becomes Markdown, so a register table stays a table with one row per line, numbered headings become sections, and a table split across chunks repeats its header row. Page citations and per-page access labels work as before; unchanged files are skipped before parsing; if Docling isn't installed or fails, ingestion falls back to pypdf. **v6.1:** deterministic query expansion, so "channel 1" also searches the datasheet's "CH1" (and IN2, OUT3, MIC1, and back).
 
 **What's new in v5: secure RAG.** Identity-aware retrieval: every chunk carries the classification label of its page (PUBLIC, INTERNAL, CONFIDENTIAL:HR, RESTRICTED:SECURITY, ...), every request runs as the user of its API key, and Qdrant only returns chunks that user's role may see, *before* anything reaches the LLM. Not allowed looks exactly like not found. Secrets are masked at ingestion, contact data in confidential chunks too; identity claims in a question ("As hr_demo, ...") are ignored; the answer cache is separated per role. A security evaluation runs the test matrix of the Northstar test corpus as each demo user and fails the build if anything leaks.
 
@@ -15,6 +17,7 @@ Ask questions about your documents and get grounded, cited answers, or an honest
 | **LangChain** | Loaders, Markdown/recursive splitters, `QdrantVectorStore` in hybrid mode, FastEmbed embeddings, `ChatOllama`, LCEL prompt chains, a custom `BaseRetriever` and a custom `BaseDocumentCompressor` reranker |
 | **LangGraph** | Agentic workflow: *contextualize follow-ups* → retrieve → grade → *rewrite and retry* or refuse → generate → grounding check |
 | **MCP** | MCP server exposing `search_documents`, `ask_knowledge_base`, `list_sources` (stdio + streamable HTTP), plus an MCP **client** agent built on LangChain/LangGraph |
+| **Docling** | Layout-aware PDF parsing: layout model + TableFormer turn each page into Markdown (tables, headings); pypdf as fallback |
 | **RAGAS** | Faithfulness, answer relevancy, context precision, context recall, factual correctness, judged by a **local** LLM |
 | **Access control** | Classification labels read from the documents at ingestion; API key → user → role → allowed labels; filter applied inside the Qdrant search; per-role answer cache; security evaluation with a CI gate |
 | **Guardrails** | Rule-based prompt-injection blocking, secret and personal-data masking, quarantine of poisoned document chunks, optional open guard model (IBM Granite Guardian via Ollama) |
@@ -65,6 +68,7 @@ Print the live graph any time: `uv run python -m ragapp.cli graph`.
 | Layer | Choice | License |
 |---|---|---|
 | LLM | IBM Granite 4 `granite4:3b` via Ollama (any Ollama model works) | Apache-2.0 |
+| PDF parsing | IBM Docling (layout + TableFormer models), pypdf fallback | MIT / BSD |
 | Embeddings | `BAAI/bge-small-en-v1.5` (FastEmbed, ONNX, no PyTorch) | MIT |
 | Keyword search | `Qdrant/bm25` sparse vectors, IDF computed by Qdrant | Apache-2.0 |
 | Reranker | `Xenova/ms-marco-MiniLM-L-6-v2` cross-encoder | Apache-2.0 |
@@ -83,7 +87,7 @@ Dependencies are managed with **uv** (`pyproject.toml` + `uv.lock`, Python pinne
 ```bash
 uv sync                                                   # env + Python 3.12 + exact locked deps
 ollama pull granite4:3b
-uv run python -m ragapp.cli warmup && uv run pytest       # 186 tests, offline
+uv run python -m ragapp.cli warmup && uv run pytest       # 221 tests, offline
 uv run python -m ragapp.cli ingest data/sample
 uv run python -m ragapp.cli ask "What's the WFH quota?"
 uv run uvicorn ragapp.api:app --port 8000                 # then: uv run streamlit run ui/app.py
@@ -93,8 +97,8 @@ Or everything at once: `docker compose up --build` → UI `:8501`, API `:8000/do
 
 ## What makes it production-grade
 
-- **Structure-aware chunking**: Markdown is split by headings; PDFs lose their repeated headers/footers and are split at numbered headings (e.g. one datasheet register per section, even across page breaks). Every chunk starts with its section title, so a piece of a long table still says which register it belongs to.
-- **Retrieval quality**: hybrid search (BM25 catches codes like "E03", dense catches paraphrases), fused server-side with RRF, then a cross-encoder reranks. A calibrated relevance threshold decides whether anything relevant was found.
+- **Structure-aware chunking**: Markdown is split by headings; PDFs are parsed with Docling (tables stay Markdown tables, one row per line; a table cut into several chunks repeats its header row), lose their repeated headers/footers and are split at numbered headings (e.g. one datasheet register per section, even across page breaks). Every chunk starts with its section title, so a piece of a long table still says which register it belongs to.
+- **Retrieval quality**: hybrid search (BM25 catches codes like "E03", dense catches paraphrases), fused server-side with RRF, then a cross-encoder reranks. A calibrated relevance threshold decides whether anything relevant was found. Numbered terms are expanded by rule before the search ("channel 1" ↔ "CH1"), so BM25 and the reranker see the words the document uses.
 - **Agentic, but cheap**: the graph only calls the LLM to rewrite when retrieval found nothing, and grades chunks with the reranker score instead of one LLM call per chunk.
 - **Conversation memory**: follow-ups such as "give me these register addresses" are rewritten into a standalone question from the last turns before retrieval. The API stays stateless (the client sends recent history), so it scales across replicas.
 - **Access control** (see `ragapp/access.py`): labels come from the documents (a page's "Classification: CONFIDENTIAL:HR" line or title, else the cover page's label, else INTERNAL: deny by default); a chunk never mixes two labels. The role comes from the API key on the server, never from the question text. The filter runs inside the Qdrant search, so forbidden chunks never reach the reranker, the LLM, the cache, citations, logs or traces, and a defensive check fails closed if one ever did. A forbidden question gets the same "I don't know" as an unknown one, so it doesn't even reveal that the document exists. Only roles with `can_ingest` may upload.
@@ -109,7 +113,7 @@ Or everything at once: `docker compose up --build` → UI `:8501`, API `:8000/do
 - **Security basics**: constant-time key comparison, upload type/size limits, path-traversal-safe file names, prompt-injection escaping, question text never logged.
 - **Operability**: liveness vs readiness probes, retries with exponential backoff, Prometheus metrics (latency per graph node, refusals, rewrites, ungrounded answers), traces linked to request IDs, Docker Compose, CI with a quality gate.
 - **Answer cache**: a repeated question is answered from memory in milliseconds instead of seconds. Exact match after normalisation (no semantic guessing), only grounded answers and genuine refusals are stored, personal data is masked in the key, and the cache is cleared whenever documents change.
-- **Tested like a product**: 186 offline tests with test doubles cover chunking, retrieval modes, every graph path, access control for every demo role, the API, MCP over the real protocol, the tracing output and the RAGAS wiring.
+- **Tested like a product**: 221 offline tests with test doubles cover chunking, retrieval modes, every graph path, access control for every demo role, the API, MCP over the real protocol, the tracing output and the RAGAS wiring.
 
 ## Evaluation
 
@@ -160,9 +164,11 @@ ragapp/
   config.py        all settings (RAG_* env vars)
   access.py        classification labels, identities (API key → user → role → allowed labels)
   ingestion.py     loaders, header/footer removal, heading-aware Markdown + PDF chunking, idempotent indexing
+  pdf_docling.py   Docling PDF → Markdown per page (layout + table models)
   store.py         QdrantVectorStore (dense + BM25 vectors, hybrid RRF)
   reranker.py      FastEmbed cross-encoder as a LangChain BaseDocumentCompressor
   retriever.py     LangChain BaseRetriever: hybrid search + rerank + threshold
+  query_expansion.py  "channel 1" <-> "CH1" rules (no LLM)
   prompts.py       ChatPromptTemplates (answer, rewrite, grounding), injection escaping
   graph.py         LangGraph StateGraph: the agentic workflow
   conversation.py  follow-up detection + check that a rewrite keeps the user's words
@@ -177,7 +183,7 @@ ragapp/
 examples/mcp_agent.py   MCP client agent (langchain-mcp-adapters + create_agent)
 config/identities.json  demo users and roles (stand-in for SSO/OIDC group claims)
 eval/                   golden set, RAGAS judge wiring, evaluation + ablations, security evaluation
-tests/                  186 offline tests, test doubles, fake_server.py, a labelled test corpus
+tests/                  221 offline tests, test doubles, fake_server.py, a labelled test corpus
 ui/app.py               Streamlit chat UI
 docker-compose.yml      Qdrant, Ollama, Phoenix, API, MCP, UI (+ Prometheus)
 pyproject.toml, uv.lock dependencies (runtime + dev/eval/ui groups), exact versions
@@ -185,6 +191,7 @@ pyproject.toml, uv.lock dependencies (runtime + dev/eval/ui groups), exact versi
 
 ## Known limitations / next steps
 
+- Docling needs PyTorch (about 1 GB) and takes seconds per page on a CPU; it's an optional dependency group, so CI and the Docker images parse PDFs with pypdf. Merged or rotated table cells can still come out wrong, and scanned PDFs need `RAG_DOCLING_OCR=true`.
 - Re-indexing a changed file is delete-then-insert (not atomic); at scale use versioned collections + alias swap.
 - No token streaming yet (`graph.astream(stream_mode="messages")` behind Server-Sent Events is the next step).
 - Conversation memory is client-side (the UI sends the last 6 messages). For long server-side sessions, add a LangGraph checkpointer (SQLite/Postgres) keyed by a thread ID.

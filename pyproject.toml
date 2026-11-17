@@ -1,6 +1,6 @@
 [project]
 name = "rag-showcase"
-version = "5.0.0"
+version = "6.1.0"
 description = "Agentic RAG on LangChain + LangGraph with MCP, RAGAS and OpenTelemetry; open-source models only"
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
@@ -33,6 +33,12 @@ dependencies = [
 [dependency-groups]
 eval = ["ragas==0.4.4"]  # kept out of the runtime image
 ui = ["streamlit==1.67.0", "httpx==0.28.1"]  # the UI only talks HTTP to the API
+# Layout-aware PDF parsing (IBM Docling, MIT): tables stay tables. Pulls PyTorch (~1 GB) and
+# downloads its layout/table models on first use. Without it, PDFs fall back to pypdf.
+docling = [
+    "docling-slim[format-pdf,models-local,convert-core]==2.150.1",
+    "opencv-python-headless>=4.6,<5",  # TableFormer imports cv2; docling-slim doesn't pull it in
+]
 dev = [
     { include-group = "eval" },
     "pytest==9.2.0",
@@ -41,7 +47,7 @@ dev = [
 
 [tool.uv]
 package = false  # an application, not a library: run from the repo root
-default-groups = ["dev", "eval", "ui"]  # `uv sync` installs everything for local work
+default-groups = ["dev", "eval", "ui", "docling"]  # `uv sync` installs everything for local work
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

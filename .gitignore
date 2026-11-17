@@ -11,3 +11,6 @@ eval/results/*.md
 
 # Your own documents (may be copyrighted or confidential): never commit
 data/private/
+
+# Personal interview notes: kept locally, not published
+docs/INTERVIEW.md

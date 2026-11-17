@@ -4,18 +4,23 @@ Chunking is structure-aware, because documents are not flat text:
 
 * **Markdown**: split by headings (``MarkdownHeaderTextSplitter``) so each chunk
   knows its section ("Employee Handbook > Vacation").
-* **PDF**: repeated page headers/footers ("Copyright ...", page numbers) are
-  removed, then the text is split at numbered headings ("8.6.1.3.84 ASI_OUT_CH_EN
-  Register (page = 0x00, address = 0x74)"). Pages are joined first, so a section
-  that continues on the next page stays together. PDFs without numbered
-  headings fall back to page-by-page splitting.
+* **PDF**: read with **Docling** (ragapp/pdf_docling.py) when it is installed: a layout
+  and a table model turn each page into Markdown, so a register table stays a table,
+  one row per line. Without Docling, pypdf extracts plain text lines. Either way,
+  repeated page headers/footers are removed, then the text is split at numbered
+  headings ("8.6.1.3.84 ASI_OUT_CH_EN Register (page = 0x00, address = 0x74)"),
+  also when Docling marks them as Markdown headings ("## 9.6.5 ..."). Pages are
+  joined first, so a section that continues on the next page stays together. PDFs
+  without numbered headings fall back to page-by-page splitting.
 * Every section is then cut to size (``RecursiveCharacterTextSplitter``) and
   each piece is prefixed with its section title: a contextual header that tells
   BM25, the embedding model and the reranker which register/section a piece of
-  a long table belongs to.
+  a long table belongs to. A table cut into several pieces repeats its header row
+  in each piece, so "7–6 | CH1 STATE CONTROL | 01" still says which column is which.
 
-A content hash per file (including the chunking version) makes re-ingestion skip
-unchanged files and re-index changed ones; deterministic chunk IDs prevent duplicates.
+A hash of the file's bytes and the chunking settings makes re-ingestion skip unchanged
+files *before* parsing them (Docling takes seconds per page), and re-index changed ones;
+deterministic chunk IDs prevent duplicates.
 
 Security at ingestion (nothing below can be undone by a prompt later):
 
@@ -43,6 +48,7 @@ from langchain_core.documents import Document
 from langchain_text_splitters import MarkdownHeaderTextSplitter, RecursiveCharacterTextSplitter
 
 from ragapp import observability as obs
+from ragapp import pdf_docling
 from ragapp.access import find_label, is_sensitive, normalize_label
 from ragapp.config import Settings
 from ragapp.guardrails import find_injection, redact
@@ -51,13 +57,20 @@ from ragapp.store import KnowledgeStore
 logger = logging.getLogger(__name__)
 SUPPORTED_EXTENSIONS = {".md", ".txt", ".pdf"}
 HEADERS = [("#", "h1"), ("##", "h2"), ("###", "h3")]
-CHUNKING_VERSION = "3"  # bump when the chunking logic changes: forces a re-index of every file
+CHUNKING_VERSION = "4"  # bump when the chunking logic changes: forces a re-index of every file
 
 # Numbered headings, e.g. "7.1 Absolute Maximum Ratings" or
 # "8.6.1.3.84 ASI_OUT_CH_EN Register (page = 0x00, address = 0x74) [reset = 0h]"
 PDF_HEADING = re.compile(r"^\d{1,2}(?:\.\d{1,3}){1,6}\s+[A-Z][A-Za-z0-9_(].{2,200}$")
 TOC_LEADER = re.compile(r"\.{3,}")  # "7.1 Absolute Maximum Ratings ........ 12"
 PAGE_NUMBER = re.compile(r"^(?:page\s*)?\d+(?:\s*(?:of|/)\s*\d+)?$", re.IGNORECASE)  # "7", "Page 7 of 9"
+MD_HEADING = re.compile(r"^#{1,6}[ \t]+")  # Docling marks headings "## 9.6.5 ..."
+TABLE_ROW = re.compile(r"^\s*\|")
+TABLE_RULE = re.compile(r"^\s*\|(?:\s*:?-+:?\s*\|)+\s*$")  # | - | --- | :-: |
+
+
+def plain_heading(line: str) -> str:
+    return MD_HEADING.sub("", line.strip())
 
 
 # ------------------------------------------------------------------- loading
@@ -72,15 +85,42 @@ def discover_files(paths: Iterable[Path | str]) -> list[Path]:
     return sorted(found)
 
 
-def load_file(path: Path) -> list[Document]:
+def pdf_parser(settings: Settings | None) -> str:
+    """The parser that will actually be used for PDFs: "docling" or "pypdf"."""
+    wanted = settings.pdf_parser if settings is not None else "pypdf"
+    if wanted == "docling" and not pdf_docling.docling_available():
+        raise RuntimeError(
+            "RAG_PDF_PARSER=docling, but Docling is not installed: run `uv sync --group docling`"
+        )
+    if wanted == "auto":
+        return "docling" if pdf_docling.docling_available() else "pypdf"
+    return wanted
+
+
+def _load_pdf_pypdf(path: Path) -> list[Document]:
+    pages = PyPDFLoader(str(path)).load()
+    return [
+        Document(page_content=p.page_content, metadata={"source": path.name, "page": i})
+        for i, p in enumerate(pages, start=1)
+        if p.page_content.strip()
+    ]
+
+
+def load_file(path: Path, settings: Settings | None = None) -> list[Document]:
     """One Document per file (text) or per page (PDF), with source/page metadata."""
     if path.suffix.lower() == ".pdf":
-        pages = PyPDFLoader(str(path)).load()
-        return [
-            Document(page_content=p.page_content, metadata={"source": path.name, "page": i})
-            for i, p in enumerate(pages, start=1)
-            if p.page_content.strip()
-        ]
+        if pdf_parser(settings) == "pypdf":
+            return _load_pdf_pypdf(path)
+        try:
+            return pdf_docling.load_pdf(
+                path, settings.docling_table_mode, settings.docling_ocr, settings.docling_threads
+            )
+        except Exception as exc:
+            if settings.pdf_parser == "docling":
+                raise
+            # auto: a model download blocked by a proxy must not stop ingestion
+            logger.warning("docling_failed_using_pypdf", extra={"source": path.name, "error": str(exc)[:300]})
+            return _load_pdf_pypdf(path)
     text = TextLoader(str(path), encoding="utf-8", autodetect_encoding=True).load()[0].page_content
     return [Document(page_content=text, metadata={"source": path.name})] if text.strip() else []
 
@@ -97,12 +137,15 @@ def strip_repeated_lines(pages: list[str], min_share: float = 0.5, min_pages: in
     """Remove lines that appear on at least ``min_share`` of the pages (headers, footers,
     copyright notices) and bare page numbers at the top or bottom of a page.
 
-    Only lines containing letters can be boilerplate, so repeated numbers in tables survive.
+    Only lines containing letters can be boilerplate, so repeated numbers in tables survive,
+    and table rows never are (a register table's header row repeats on many pages).
     """
     boilerplate: set[str] = set()
     if len(pages) >= min_pages:
         counts = Counter(
-            key for page in pages for key in {_line_key(x) for x in page.splitlines() if x.strip()}
+            key
+            for page in pages
+            for key in {_line_key(x) for x in page.splitlines() if x.strip() and not TABLE_ROW.match(x)}
         )
         threshold = max(2, int(len(pages) * min_share))
         boilerplate = {
@@ -110,12 +153,16 @@ def strip_repeated_lines(pages: list[str], min_share: float = 0.5, min_pages: in
         }
     cleaned_pages = []
     for page in pages:
-        lines = [x for x in page.splitlines() if x.strip() and _line_key(x) not in boilerplate]
-        while lines and PAGE_NUMBER.match(lines[0].strip()):  # page number on top
+        lines = [
+            x
+            for x in page.splitlines()
+            if not x.strip() or TABLE_ROW.match(x) or _line_key(x) not in boilerplate
+        ]
+        while lines and (not lines[0].strip() or PAGE_NUMBER.match(lines[0].strip())):  # page number on top
             lines.pop(0)
-        while lines and PAGE_NUMBER.match(lines[-1].strip()):  # page number at the bottom
+        while lines and (not lines[-1].strip() or PAGE_NUMBER.match(lines[-1].strip())):  # ... at the bottom
             lines.pop()
-        cleaned_pages.append("\n".join(lines))
+        cleaned_pages.append(re.sub(r"\n{3,}", "\n\n", "\n".join(lines)))  # keep paragraph breaks
     return cleaned_pages
 
 
@@ -155,7 +202,7 @@ def split_pdf_sections(
             start_page, label, buffer = page_no, page_label, []
         toc_page = _is_toc_page(text)
         for line in text.splitlines():
-            stripped = line.strip()
+            stripped = plain_heading(line)  # "## 9.6.5 Title" (Docling) and "9.6.5 Title" (pypdf)
             if not toc_page and PDF_HEADING.match(stripped) and not TOC_LEADER.search(stripped):
                 flush()
                 title, start_page, buffer = stripped, page_no, []
@@ -168,6 +215,29 @@ def split_pdf_sections(
     return sections if headings >= 3 else []
 
 
+def repeat_table_headers(pieces: list[str]) -> list[str]:
+    """A Markdown table cut into several pieces repeats its header row in each piece, so a
+    row such as "| 7–6 | CH1 STATE CONTROL | R/W | 01 | ... |" keeps its column names."""
+    result: list[str] = []
+    header: str | None = None
+    for piece in pieces:
+        lines = [x for x in piece.splitlines() if x.strip()]
+        starts_with_header = len(lines) > 1 and TABLE_ROW.match(lines[0]) and TABLE_RULE.match(lines[1])
+        if header and lines and TABLE_ROW.match(lines[0]) and not starts_with_header:
+            piece = f"{header}\n{piece}"
+        result.append(piece)
+        for i in range(len(lines) - 1):  # remember the last table header seen
+            if (
+                TABLE_ROW.match(lines[i])
+                and not TABLE_RULE.match(lines[i])
+                and TABLE_RULE.match(lines[i + 1])
+            ):
+                header = f"{lines[i]}\n{lines[i + 1]}"
+        if lines and not TABLE_ROW.match(lines[-1]):  # the table ended in this piece
+            header = None
+    return result
+
+
 def page_title(text: str) -> tuple[str | None, str]:
     """(title, rest) if the page starts with a heading-like line ("03. IT Operations — Access
     provisioning"), else (None, text). Used as the contextual header of every chunk of the page,
@@ -175,7 +245,7 @@ def page_title(text: str) -> tuple[str | None, str]:
     lines = text.splitlines()
     if len(lines) < 2:
         return None, text
-    first = lines[0].strip()
+    first = plain_heading(lines[0])
     heading_like = (
         5 <= len(first) <= 100
         and len(first.split()) >= 2
@@ -245,7 +315,7 @@ class Ingestor:
         for title, page, text, label in self._sections(docs):
             # The Markdown path already starts with the document title; PDF sections get the file name.
             header = (title or stem) if is_markdown else (f"{stem} > {title}" if title else stem)
-            for piece in self.size_splitter.split_text(text):
+            for piece in repeat_table_headers(self.size_splitter.split_text(text)):
                 content, masked = self._protect(f"[{header}]\n{piece}", label)
                 metadata = {"source": source, "section": title, "classification": label}
                 if page is not None:
@@ -255,13 +325,18 @@ class Ingestor:
                 chunks.append(Document(page_content=content, metadata=metadata))
         return chunks
 
-    def _hash(self, docs: list[Document]) -> str:
+    def _hash(self, path: Path) -> str:
+        """File bytes + everything that changes the chunks. Computed before parsing, so an
+        unchanged PDF is skipped without running Docling again."""
         s = self.settings
+        parser = pdf_parser(s) if path.suffix.lower() == ".pdf" else "text"
+        if parser == "docling":
+            parser += f":{s.docling_table_mode}:{s.docling_ocr}"
         signature = (
             f"v{CHUNKING_VERSION}|{s.chunk_size}|{s.chunk_overlap}|{s.default_classification}|"
-            f"{s.mask_secrets}|{sorted(s.confidential_pii_kinds)}|"
+            f"{s.mask_secrets}|{sorted(s.confidential_pii_kinds)}|{parser}|"
         )
-        return hashlib.sha256((signature + "".join(d.page_content for d in docs)).encode()).hexdigest()[:16]
+        return hashlib.sha256(signature.encode() + path.read_bytes()).hexdigest()[:16]
 
     def ingest(self, paths: Iterable[Path | str]) -> dict:
         files = discover_files(paths)
@@ -269,14 +344,14 @@ class Ingestor:
         labels: Counter[str] = Counter()
         masked: Counter[str] = Counter()
         for path in files:
-            docs = load_file(path)
-            if not docs:
-                logger.warning("empty_file", extra={"source": path.name})
-                continue
             source = path.name
-            doc_hash = self._hash(docs)
+            doc_hash = self._hash(path)
             if self.store.get_doc_hash(source) == doc_hash:
                 skipped += 1
+                continue
+            docs = load_file(path, self.settings)
+            if not docs:
+                logger.warning("empty_file", extra={"source": path.name})
                 continue
             chunks = self.split(docs)
             if self.settings.guardrails_enabled and self.settings.quarantine_suspicious_chunks:

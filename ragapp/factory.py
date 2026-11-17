@@ -21,6 +21,7 @@ def build_llm(s: Settings):
         base_url=s.llm_base_url,
         temperature=s.llm_temperature,
         seed=s.llm_seed,  # with temperature 0: reproducible answers (demo, evaluation, debugging)
+        reasoning=s.llm_reasoning,  # False: no "thinking" phase for qwen3 / deepseek-r1
         num_predict=s.llm_max_tokens,
         client_kwargs={"timeout": s.llm_timeout_s},
     )

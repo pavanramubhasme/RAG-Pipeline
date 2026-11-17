@@ -13,8 +13,8 @@ jobs:
       - uses: astral-sh/setup-uv@v7 # installs uv; uv installs Python 3.12 from .python-version
         with:
           enable-cache: true
-      - name: Install (fails if uv.lock is out of date)
-        run: uv sync --locked
+      - name: Install (fails if uv.lock is out of date; Docling + PyTorch not needed for the tests)
+        run: uv sync --locked --no-group docling
       - name: Lint
         run: uv run ruff check . && uv run ruff format --check .
       - name: Tests (offline, test doubles; covers graph, API, MCP, tracing, RAGAS wiring)
@@ -41,7 +41,7 @@ jobs:
         with:
           path: .cache/models
           key: models-${{ hashFiles('ragapp/config.py') }}
-      - run: uv sync --locked
+      - run: uv sync --locked --no-group docling
       - run: uv run python -m eval.run_eval --ablation
       - run: uv run python -m eval.run_eval --retrieval-only --min-hit-rate 0.8
       - uses: actions/upload-artifact@v4

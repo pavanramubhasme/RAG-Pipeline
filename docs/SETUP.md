@@ -24,19 +24,21 @@ uv --version
 ## Step 2 — Open a terminal in the project folder
 
 ```powershell
-cd C:\path\to\rag-showcase-v5
+cd C:\path\to\rag-showcase-v6
 ```
 
-**Coming from v4?** Stop the API and the UI, then copy your own files over (run in the v5 folder; adjust the old path):
+**Coming from v5?** Stop the API and the UI, copy the new and changed files into your project folder (your `.env`, `.cache`, `data\private` and Git history stay), then:
 
 ```powershell
-$old = "C:\path\to\rag-showcase-v4"
-Copy-Item "$old\.env" .
-Copy-Item "$old\.cache" . -Recurse             # downloaded models
-Copy-Item "$old\data\private\*" data\private\ -Recurse   # your own PDFs
+setx UV_CACHE_DIR D:\uv-cache          # optional: keep uv's download cache off a full C: drive
+$env:UV_CACHE_DIR = "D:\uv-cache"
+uv sync                                 # adds Docling + PyTorch (about 1 GB)
+uv run python -m pytest                 # 221 passed
+Remove-Item -Recurse .qdrant            # chunks change with Docling: rebuild the index once
+uv run python -m ragapp.cli ingest data\private
 ```
 
-Don't copy `.qdrant`: v5 stores a classification label with every chunk, so the index is rebuilt once (Step 11c). Then update `.env` (Step 5 lists what changed) and continue with Step 3.
+The first ingest downloads Docling's layout and table models (about 0.5 GB) and takes a few seconds per PDF page (Step 8b).
 
 ## Step 3 — Create the environment and install everything
 
@@ -44,7 +46,7 @@ Don't copy `.qdrant`: v5 stores a classification label with every chunk, so the 
 uv sync
 ```
 
-This one command creates `.venv`, downloads Python 3.12 if needed, and installs the exact versions from `uv.lock` (runtime + `dev`, `eval` and `ui` groups).
+This one command creates `.venv`, downloads Python 3.12 if needed, and installs the exact versions from `uv.lock` (runtime + `dev`, `eval`, `ui` and `docling` groups). Docling pulls in PyTorch (about 1 GB); to skip it and parse PDFs with pypdf: `uv sync --no-group docling`.
 
 **No activation needed:** run every command through `uv run ...` and it uses `.venv` automatically. (If you prefer, activate once with `.venv\Scripts\Activate.ps1` [`source .venv/bin/activate`] and drop the `uv run` prefix.)
 
@@ -88,21 +90,42 @@ Expect: `Models cached.`
 uv run pytest
 ```
 
-Expect: `175 passed`. Don't continue until this passes.
+Expect: `221 passed` (220 + 1 skipped without Docling). Don't continue until this passes.
 
 ## Step 8 — Index the documents and ask questions
 
+Put your PDF (the Northstar test corpus) in `data\private\`, then:
+
 ```powershell
-uv run python -m ragapp.cli ingest data/sample
-uv run python -m ragapp.cli ask "How many vacation days do I get, and can I carry them over?"
-uv run python -m ragapp.cli ask "What's the WFH quota?"
+uv run python -m ragapp.cli ingest data\private
+uv run python -m ragapp.cli ask "What is the record ID of the access provisioning procedure?"
+uv run python -m ragapp.cli ask "What is the illustrative Q2 revenue?" --user employee_demo
 uv run python -m ragapp.cli ask "Who won the 2022 FIFA World Cup?"
 uv run python -m ragapp.cli graph
 ```
 
+The second question is asked as `employee_demo`, who may not see finance pages, so it gets "I don't know". `data\private` is never committed to Git. (The tests and the quality evaluation use the sample documents in `data\sample` and `tests\data`.)
+
 Check the `path:` line under each answer. That's the route through the LangGraph workflow: `retrieve -> generate -> check_grounding` for a normal answer, with `rewrite` when the first search found nothing relevant and `refuse` for the off-topic question. `graph` prints the workflow as Mermaid (paste it into mermaid.live).
 
 **The core is working.**
+
+## Step 8b — PDF parsing with Docling (tables stay tables)
+
+pypdf reads a PDF page as loose text lines, so a register table loses its columns and a small LLM has to guess which value belongs to which field. **Docling** (IBM, MIT licence, runs locally) runs a layout model and a table model on every page and returns Markdown: headings as `## …`, tables as Markdown tables with one row per line. A table cut into several chunks repeats its header row in each one.
+
+It's used automatically when installed (`RAG_PDF_PARSER=auto`). Check:
+
+```powershell
+uv run python -c "from ragapp.pdf_docling import docling_available; print(docling_available())"   # True
+```
+
+- **First run:** downloads the models from Hugging Face (about 0.5 GB; uses your `HF_TOKEN`). To keep them off C:, add `HF_HOME=D:/hf-cache` to `.env` (forward slashes: at a backslash path uv stops reading `.env`, so `HF_TOKEN` and the lines after it are lost).
+- **Speed:** a few seconds per page on a CPU, once per file: unchanged files are skipped *before* parsing. `RAG_DOCLING_TABLE_MODE=fast` is about twice as quick.
+- **Fallback:** if Docling fails (e.g. a blocked model download), ingestion continues with pypdf and logs `docling_failed_using_pypdf`. `RAG_PDF_PARSER=docling` makes it an error instead; `RAG_PDF_PARSER=pypdf` turns Docling off.
+- **Scanned PDFs** (images, no text): `RAG_DOCLING_OCR=true`.
+
+Try it on a datasheet: *"Which value in the Channel State Control register mutes CH1?"* The citation now shows the table row `| 7–6 | CH1 STATE CONTROL | R/W | 01 | 00: PLAY 01: Hi-Z 10: MUTE … |`. Then the everyday wording: *"To mute channel 1, what value do I set?"* Query expansion (v6.1) also searches "CH1", so it should find the same table instead of the volume register. Turn it off to compare: `RAG_QUERY_EXPANSION=false`, restart the API.
 
 ## Step 9 — Start tracing (Phoenix)
 
@@ -193,7 +216,7 @@ From the CLI (API stopped): `uv run python -m ragapp.cli ask "What salary does E
 
 ```powershell
 uv run python -m eval.security_eval --docs data\private\northstar_secure_rag_guardrails_test_dataset.pdf
-Get-Content eval\results\security.md
+Get-Content -Encoding utf8 eval\results\security.md
 ```
 
 It asks the 20 cases from the PDF's own test matrix and demo script, each as the right demo user, and checks that nothing forbidden is shown (answer and citations), that every citation is within the user's scope, and that allowed questions are answered. It exits with an error if anything leaked.
@@ -221,7 +244,7 @@ The agent starts the MCP server, discovers its tools, decides which ones to call
   "mcpServers": {
     "nordwind-kb": {
       "command": "uv",
-      "args": ["--directory", "C:\\path\\to\\rag-showcase-v5", "run", "python", "-m", "ragapp.mcp_server"],
+      "args": ["--directory", "C:\\path\\to\\rag-showcase-v6", "run", "python", "-m", "ragapp.mcp_server"],
       "env": { "RAG_API_URL": "http://127.0.0.1:8000" }
     }
   }
@@ -245,6 +268,8 @@ uv run python -m eval.run_eval --limit 5            # quick RAGAS check
 uv run python -m eval.run_eval --compare-agentic    # full RAGAS, linear vs agent (slow on CPU)
 ```
 
+They run on the sample documents in `data\sample` with the 15 + 3 questions in `eval\golden_set.jsonl`, in their own in-memory index (the API may keep running). Other documents: add `--docs <file or folder> --golden <questions.jsonl>`.
+
 Reports go to `eval/results/` (`.md` tables to show, `.json` with every question). If scores look odd, check `judge_failures` first: small judge models often return broken JSON. Show a table with `Get-Content eval\results\ablation.md` or `Get-Content eval\results\end_to_end.md`.
 
 | Metric | Where | What it tells you | Needs the LLM? |
@@ -264,7 +289,7 @@ Reports go to `eval/results/` (`.md` tables to show, `.json` with every question
 
 A chunk counts as relevant for precision/recall@k if it comes from the reference document and section and contains the facts of the reference answer (`reference_section` and `must_include` in `eval/golden_set.jsonl`), so no chunk IDs are hand-labelled and the labels survive re-chunking. Per-question details are in `eval/results/retrieval.json` and `eval/results/end_to_end*.json`.
 
-With only one answer chunk per question in the sample documents, `precision@4` can't exceed 0.25 when 4 chunks are returned; the reranker threshold raises it by dropping weak chunks. That difference is what the ablation shows.
+With only one answer chunk per question in the golden set, `precision@4` can't exceed 0.25 when 4 chunks are returned; the reranker threshold raises it by dropping weak chunks. That difference is what the ablation shows.
 
 ## Step 16 — Stop everything
 
@@ -276,7 +301,7 @@ With only one answer chunk per question in the sample documents, `precision@4` c
 docker compose up --build
 ```
 
-UI http://localhost:8501 · API http://localhost:8000/docs · traces http://localhost:6006 · MCP http://localhost:8001/mcp. Add Prometheus with `docker compose --profile monitoring up --build` (http://localhost:9090). Index the samples by uploading them in the UI. The images install dependencies with `uv sync --frozen` from the same `uv.lock`.
+UI http://localhost:8501 · API http://localhost:8000/docs · traces http://localhost:6006 · MCP http://localhost:8001/mcp. Add Prometheus with `docker compose --profile monitoring up --build` (http://localhost:9090). Index the samples by uploading them in the UI. The images install dependencies with `uv sync --frozen` from the same `uv.lock`, without Docling (to keep them small), so PDFs are parsed with pypdf there; add `--group docling` to the `uv sync` line in `Dockerfile` to change that.
 
 ## Managing dependencies with uv
 
@@ -287,6 +312,7 @@ UI http://localhost:8501 · API http://localhost:8000/docs · traces http://loca
 | Upgrade one package | `uv lock --upgrade-package <package>` then `uv sync` |
 | Check the lock is up to date (CI does this) | `uv sync --locked` |
 | Install only runtime deps (what Docker does) | `uv sync --no-default-groups` |
+| Everything except Docling/PyTorch (what CI does) | `uv sync --no-group docling` |
 
 Commit both `pyproject.toml` and `uv.lock`.
 
@@ -301,6 +327,9 @@ Commit both `pyproject.toml` and `uv.lock`.
 | Answers from a PDF cite the wrong section after an update | Re-index once: upload the PDF again in the UI (or CLI `ingest` with the API stopped). Changed chunking logic is detected automatically and the old chunks are replaced |
 | `Storage folder .qdrant is already accessed` | The API is running: stop it before CLI `ingest`/`ask`, or use a Qdrant server (Step 10 note) |
 | `503 LLM backend unavailable` | Ollama not running or model missing: `ollama list` |
+| `No module named 'cv2'` on the first PDF ingest | Your `uv.lock` predates the OpenCV fix: update `pyproject.toml` and `uv.lock`, then `uv sync` |
+| Ingest log: *sending unauthenticated requests to the HF Hub*, models land in `C:\Users\...\.cache\huggingface` | uv isn't passing `.env` on: `$env:UV_ENV_FILE = ".env"` (Step 5), and use forward slashes in `HF_HOME` |
+| `uv trampoline failed to canonicalize script path` | A broken `.exe` launcher in `.venv\Scripts`. Use `uv run python -m pytest` (or `python -m uvicorn`, `python -m streamlit`), or repair: `uv sync --reinstall-package pytest --reinstall-package uvicorn --reinstall-package streamlit` |
 | `ModuleNotFoundError` | Run commands with `uv run ...` from the project folder, or run `uv sync` again |
 | No traces in Phoenix | `RAG_TRACING_ENABLED=true` in `.env`, Phoenix running, API restarted |
 | MCP agent: "API unreachable" | Start the API first (Step 10) |
@@ -313,8 +342,13 @@ Commit both `pyproject.toml` and `uv.lock`.
 | The same question gives different wording | `RAG_LLM_TEMPERATURE=0` and `RAG_LLM_SEED=42` (the defaults). Also start a **New conversation**: a different history means a different prompt |
 | A new topic is answered with the previous topic's answer | Fixed in v4 (follow-up detection). If it still happens, note the question and click **New conversation** |
 | Old answer after changing a document | Ingest the new version (this clears the answer cache) or restart the API |
+| "I don't know" with **Guardrails: refused:unsupported_numbers** | The LLM wrote a number that is in none of the retrieved chunks, so the answer was withheld. To see such answers with a warning instead: `RAG_NUMBER_CHECK=flag` |
 | Every answer is "I don't know" after upgrading to v5 | The index was built before v5 and has no labels: rebuild it (Step 11c). Or you are signed in as `visitor_demo`, who only sees PUBLIC pages |
 | UI: "The API did not accept this user's key" / 401 | The key isn't in `config/identities.json`, or `RAG_API_KEY` in `.env` has a typo |
 | Upload fails with 403 | Only roles with `can_ingest` (here `admin_demo`) may add documents |
 | MCP agent finds nothing | It runs as the user of `RAG_API_KEY`; set `RAG_API_KEY=employee-demo-key` (or another demo key) in `.env` |
+| Model download: `SSL: CERTIFICATE_VERIFY_FAILED` (company network) | Remove `HF_HUB_DISABLE_XET=1` from `.env`: the Xet download client trusts the Windows certificate store, the plain download doesn't. Once the models are in `HF_HOME`, nothing is downloaded again |
+| Ingesting a PDF takes minutes | Docling reads every page with two models: a few seconds per page on a CPU, once per file. `RAG_DOCLING_TABLE_MODE=fast` halves it |
+| `docling_failed_using_pypdf` in the log | Docling couldn't run (usually the model download): check `HF_TOKEN` in `.env`, then ingest the file again. Until then the PDF is indexed with pypdf |
+| `There is not enough space on the disk` during `uv sync` or the first ingest | Put the caches on D:: `setx UV_CACHE_DIR D:\uv-cache` and `HF_HOME=D:/hf-cache` in `.env`, or skip Docling with `uv sync --no-group docling` |
 | API won't start: "identities ... does not exist" | Start it from the project folder, or set `RAG_IDENTITIES_FILE` to the full path |

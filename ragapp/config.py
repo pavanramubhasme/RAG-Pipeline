@@ -31,6 +31,10 @@ class Settings(BaseSettings):
     llm_model: str = "granite4:3b"  # IBM Granite 4, Apache-2.0
     llm_temperature: float = 0.0  # 0 + fixed seed = the same question gives the same answer
     llm_seed: int | None = 42
+    # Thinking models (qwen3, deepseek-r1) reason before answering. False = answer directly:
+    # several times faster on CPU and no risk of the reasoning eating the token budget.
+    # None = the model's default (leave it for models without thinking, such as granite4).
+    llm_reasoning: bool | None = None
     llm_max_tokens: int = 512
     llm_timeout_s: float = 120.0
     llm_max_retries: int = 2
@@ -40,12 +44,19 @@ class Settings(BaseSettings):
     chunk_size: int = 800
     chunk_overlap: int = 120
 
+    # --- PDF parsing (ragapp/pdf_docling.py) -------------------------------------------------
+    pdf_parser: Literal["auto", "docling", "pypdf"] = "auto"  # auto: Docling if installed, else pypdf
+    docling_table_mode: Literal["accurate", "fast"] = "accurate"  # TableFormer: accurate or ~2x faster
+    docling_ocr: bool = False  # only needed for scanned PDFs (adds an OCR model and time)
+    docling_threads: int = 4
+
     # --- Retrieval -----------------------------------------------------------------
     retrieval_mode: Literal["dense", "sparse", "hybrid"] = "hybrid"
     rerank: bool = True  # False = skip the cross-encoder (ablation)
     candidates_k: int = 20  # hybrid search returns this many
     top_k: int = 4  # chunks passed to the LLM after reranking
     min_relevance: float = 0.05  # reranker probability; below -> chunk dropped
+    query_expansion: bool = True  # "channel 1" also searches "CH1" and back (deterministic, no LLM)
 
     # --- Agentic workflow (LangGraph) ----------------------------------------------
     max_rewrites: int = 1  # retries with an LLM-rewritten query when nothing relevant is found
