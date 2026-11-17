@@ -83,7 +83,7 @@ Dependencies are managed with **uv** (`pyproject.toml` + `uv.lock`, Python pinne
 ```bash
 uv sync                                                   # env + Python 3.12 + exact locked deps
 ollama pull granite4:3b
-uv run python -m ragapp.cli warmup && uv run pytest       # 175 tests, offline
+uv run python -m ragapp.cli warmup && uv run pytest       # 186 tests, offline
 uv run python -m ragapp.cli ingest data/sample
 uv run python -m ragapp.cli ask "What's the WFH quota?"
 uv run uvicorn ragapp.api:app --port 8000                 # then: uv run streamlit run ui/app.py
@@ -103,13 +103,13 @@ Or everything at once: `docker compose up --build` → UI `:8501`, API `:8000/do
   - *documents*: chunks containing injection text are quarantined at ingestion (defence against indirect prompt injection); secrets (API keys, tokens, passwords, connection strings) are masked before indexing, and e-mails and phone numbers in CONFIDENTIAL/RESTRICTED chunks too;
   - *output*: secrets, IBANs and card numbers are masked in answers;
   - *optional guard model*: IBM Granite Guardian (Apache-2.0) checks each question for jailbreak/harm (`RAG_GUARD_MODEL=granite3-guardian:2b`), fail-open or fail-closed by setting.
-- **Hallucination controls**: refuse when nothing is relevant; context-only prompt with mandatory citations (invalid citation numbers are dropped); an LLM grounding check flags unsupported answers; RAGAS faithfulness is measured offline.
+- **Hallucination controls**: refuse when nothing is relevant; a deterministic number check refuses any answer that states a number found in neither the sources nor the question (a small LLM judge once let an invented "$1.2 billion" through); context-only prompt with mandatory citations (invalid citation numbers are dropped); an LLM grounding check flags unsupported answers; RAGAS faithfulness is measured offline.
 - **Graceful degradation**: if the rewrite or grounding LLM call fails, the system refuses or skips the check instead of returning an error; only answer generation failures return 503.
 - **Idempotent ingestion**: content hash per file, deterministic chunk IDs; unchanged files skipped, changed files replaced.
 - **Security basics**: constant-time key comparison, upload type/size limits, path-traversal-safe file names, prompt-injection escaping, question text never logged.
 - **Operability**: liveness vs readiness probes, retries with exponential backoff, Prometheus metrics (latency per graph node, refusals, rewrites, ungrounded answers), traces linked to request IDs, Docker Compose, CI with a quality gate.
 - **Answer cache**: a repeated question is answered from memory in milliseconds instead of seconds. Exact match after normalisation (no semantic guessing), only grounded answers and genuine refusals are stored, personal data is masked in the key, and the cache is cleared whenever documents change.
-- **Tested like a product**: 175 offline tests with test doubles cover chunking, retrieval modes, every graph path, access control for every demo role, the API, MCP over the real protocol, the tracing output and the RAGAS wiring.
+- **Tested like a product**: 186 offline tests with test doubles cover chunking, retrieval modes, every graph path, access control for every demo role, the API, MCP over the real protocol, the tracing output and the RAGAS wiring.
 
 ## Evaluation
 
@@ -121,6 +121,8 @@ uv run python -m eval.run_eval                      # RAGAS on the full golden s
 uv run python -m eval.run_eval --compare-agentic    # linear pipeline vs LangGraph agent
 uv run python -m eval.security_eval --docs <test PDF>  # attacks + allowed requests per demo user
 ```
+
+The Northstar test PDF used by the security evaluation is not in the repository; CI runs the same checks on the small labelled corpus in `tests/data/secure`.
 
 The golden set (`eval/golden_set.jsonl`) has 15 answerable questions with reference answers and source documents, plus 3 the documents cannot answer. Each answerable question names its reference section, so precision@k and recall@k are computed without hand-labelled chunk IDs. Reports go to `eval/results/` as JSON and Markdown tables.
 
@@ -175,7 +177,7 @@ ragapp/
 examples/mcp_agent.py   MCP client agent (langchain-mcp-adapters + create_agent)
 config/identities.json  demo users and roles (stand-in for SSO/OIDC group claims)
 eval/                   golden set, RAGAS judge wiring, evaluation + ablations, security evaluation
-tests/                  175 offline tests, test doubles, fake_server.py, a labelled test corpus
+tests/                  186 offline tests, test doubles, fake_server.py, a labelled test corpus
 ui/app.py               Streamlit chat UI
 docker-compose.yml      Qdrant, Ollama, Phoenix, API, MCP, UI (+ Prometheus)
 pyproject.toml, uv.lock dependencies (runtime + dev/eval/ui groups), exact versions
