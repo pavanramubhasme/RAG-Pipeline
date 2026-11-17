@@ -171,7 +171,13 @@ if question := st.chat_input("e.g. What's the WFH quota?"):
                     f"🔐 Searched as **{access['user']}** ({access['role']}), "
                     f"only in: {', '.join(access['scopes'])}"
                 )
-            if data.get("cached"):
+            if data.get("cache_similar_to"):
+                st.caption(
+                    f"⚡ Answered from cache: same meaning as your earlier question "
+                    f'*"{data["cache_similar_to"]}"* (similarity {data["cache_similarity"]:.2f}), '
+                    "so no retrieval and no LLM call."
+                )
+            elif data.get("cached"):
                 st.caption(
                     "⚡ Answered from cache: asked before, so no retrieval and no LLM call. "
                     "The cache is cleared whenever documents are added."

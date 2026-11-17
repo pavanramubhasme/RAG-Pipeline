@@ -43,11 +43,16 @@ def build_guard_llm(s: Settings):
     )
 
 
-def build_encoders(s: Settings):
-    """Downloads ~150 MB of ONNX models on first use, then loads them from cache."""
-    dense = FastEmbedEmbeddings(
+def build_dense(s: Settings) -> FastEmbedEmbeddings:
+    """The semantic embedding model: used by the search and by the answer cache."""
+    return FastEmbedEmbeddings(
         model_name=s.dense_model, cache_dir=s.model_cache_dir, doc_embed_type="passage"
     )
+
+
+def build_encoders(s: Settings):
+    """Downloads ~150 MB of ONNX models on first use, then loads them from cache."""
+    dense = build_dense(s)
     sparse = FastEmbedSparse(model_name=s.sparse_model, cache_dir=s.model_cache_dir)
     reranker = FastEmbedReranker(model_name=s.rerank_model, cache_dir=s.model_cache_dir)
     reranker.score("warm up", ["load the model now, not on the first request"])

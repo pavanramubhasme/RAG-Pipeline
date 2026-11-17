@@ -33,7 +33,9 @@ GUARDRAIL_EVENTS = Counter(
     "Guardrail actions: blocked requests, redactions, quarantined chunks",
     ["event"],
 )
-ANSWER_CACHE = Counter("rag_answer_cache_total", "Answer cache lookups", ["result"])  # hit | miss
+ANSWER_CACHE = Counter(
+    "rag_answer_cache_total", "Answer cache lookups", ["result"]
+)  # hit | similar_hit | miss
 
 _tracer_provider = None
 

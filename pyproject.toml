@@ -1,6 +1,6 @@
 [project]
 name = "rag-showcase"
-version = "6.2.0"
+version = "6.3.0"
 description = "Agentic RAG on LangChain + LangGraph with RAGAS and OpenTelemetry; open-source models only"
 readme = "README.md"
 requires-python = ">=3.11,<3.14"

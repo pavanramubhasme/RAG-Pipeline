@@ -91,7 +91,12 @@ class RAGService:
         )
         self.ingestor.settings = settings
         self.graph = build_graph(
-            self.retriever, self.llm, settings, guardrails=self.guardrails, cache=self.cache
+            self.retriever,
+            self.llm,
+            settings,
+            guardrails=self.guardrails,
+            cache=self.cache,
+            embed=self.store.embeddings.embed_query,  # the search model, reused for the cache
         )
 
     # ------------------------------------------------------------------ ingest
@@ -140,6 +145,7 @@ class RAGService:
                     "history": history or [],
                     "top_k": top_k,
                     "scopes": who.scope_list(),
+                    "user": who.user,
                     "rewrites": 0,
                 },
                 config={
@@ -189,6 +195,8 @@ class RAGService:
             refused=refused,
             access=AccessInfo(**who.describe()) if self.access is not None else None,
             cached=bool(state.get("cached")),
+            cache_similar_to=state.get("cache_similar_to"),
+            cache_similarity=state.get("cache_similarity"),
             blocked=bool(state.get("blocked")),
             guardrails=guardrail_events,
             grounded=state.get("grounded"),

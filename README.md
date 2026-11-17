@@ -4,7 +4,7 @@ Ask questions about your documents and get grounded, cited answers, or an honest
 
 **Step-by-step setup: [docs/SETUP.md](docs/SETUP.md)**
 
-**What's new in v6: layout-aware PDF parsing.** PDFs are read with IBM Docling (layout + table models, local, MIT): every page becomes Markdown, so a register table stays a table with one row per line, numbered headings become sections, and a table split across chunks repeats its header row. Page citations and per-page access labels work as before; unchanged files are skipped before parsing; if Docling isn't installed or fails, ingestion falls back to pypdf. **v6.1:** deterministic query expansion, so "channel 1" also searches the datasheet's "CH1" (and IN2, OUT3, MIC1, and back).
+**What's new in v6: layout-aware PDF parsing.** PDFs are read with IBM Docling (layout + table models, local, MIT): every page becomes Markdown, so a register table stays a table with one row per line, numbered headings become sections, and a table split across chunks repeats its header row. Page citations and per-page access labels work as before; unchanged files are skipped before parsing; if Docling isn't installed or fails, ingestion falls back to pypdf. **v6.3:** the answer cache also recognises your own earlier question in other words, guarded by code: numbers and codes must match, and same words in another order only count if just one phrase moved ("Can HR see employee data?" never matches "Can employees see HR data?"). **v6.1:** deterministic query expansion, so "channel 1" also searches the datasheet's "CH1" (and IN2, OUT3, MIC1, and back).
 
 **What's new in v5: secure RAG.** Identity-aware retrieval: every chunk carries the classification label of its page (PUBLIC, INTERNAL, CONFIDENTIAL:HR, RESTRICTED:SECURITY, ...), every request runs as the user of its API key, and Qdrant only returns chunks that user's role may see, *before* anything reaches the LLM. Not allowed looks exactly like not found. Secrets are masked at ingestion, contact data in confidential chunks too; identity claims in a question ("As hr_demo, ...") are ignored; the answer cache is separated per role. A security evaluation runs the test matrix of the Northstar test corpus as each demo user and fails the build if anything leaks.
 
@@ -82,7 +82,7 @@ Dependencies are managed with **uv** (`pyproject.toml` + `uv.lock`, Python pinne
 ```bash
 uv sync                                                   # env + Python 3.12 + exact locked deps
 ollama pull granite4:3b
-uv run python -m ragapp.cli warmup && uv run pytest       # 215 tests, offline
+uv run python -m ragapp.cli warmup && uv run pytest       # 244 tests, offline
 uv run python -m ragapp.cli ingest data/sample
 uv run python -m ragapp.cli ask "What's the WFH quota?"
 uv run uvicorn ragapp.api:app --port 8000                 # then: uv run streamlit run ui/app.py
@@ -107,8 +107,8 @@ Or everything at once: `docker compose up --build` → UI `:8501`, API `:8000/do
 - **Idempotent ingestion**: content hash per file, deterministic chunk IDs; unchanged files skipped, changed files replaced.
 - **Security basics**: constant-time key comparison, upload type/size limits, path-traversal-safe file names, prompt-injection escaping, question text never logged.
 - **Operability**: liveness vs readiness probes, retries with exponential backoff, Prometheus metrics (latency per graph node, refusals, rewrites, ungrounded answers), traces linked to request IDs, Docker Compose, CI with a quality gate.
-- **Answer cache**: a repeated question is answered from memory in milliseconds instead of seconds. Exact match after normalisation (no semantic guessing), only grounded answers and genuine refusals are stored, personal data is masked in the key, and the cache is cleared whenever documents change.
-- **Tested like a product**: 215 offline tests with test doubles cover chunking, retrieval modes, every graph path, access control for every demo role, the API, the tracing output and the RAGAS wiring.
+- **Answer cache**: a repeated question is answered from memory in milliseconds instead of seconds: the same question (any user with the same access), or one of your own earlier questions in other words. A reworded match must have the same numbers and codes (2025 ≠ 2026, CH1 ≠ CH2), the same content words with at most one phrase moved (similarity ≥ 0.90), or almost the same meaning (≥ 0.98, calibrated with `eval/cache_calibration.py`, a CI gate). Only grounded answers and genuine refusals are stored, personal data is masked in the key, and the cache is cleared whenever documents change.
+- **Tested like a product**: 244 offline tests with test doubles cover chunking, retrieval modes, every graph path, access control for every demo role, the API, the tracing output and the RAGAS wiring.
 
 ## Evaluation
 
@@ -159,7 +159,7 @@ ragapp/
   prompts.py       ChatPromptTemplates (answer, rewrite, grounding), injection escaping
   graph.py         LangGraph StateGraph: the agentic workflow
   conversation.py  follow-up detection + check that a rewrite keeps the user's words
-  cache.py         answer cache (LRU + TTL, cleared on ingest)
+  cache.py         answer cache: exact + same-meaning matches with code checks (LRU + TTL, cleared on ingest)
   service.py       RAGService used by API, CLI and eval
   factory.py       wires the real open-source models
   api.py           FastAPI: /query /search /sources /ingest /whoami /health /live /metrics
@@ -168,7 +168,7 @@ ragapp/
   cli.py           warmup / ingest / ask / graph
 config/identities.json  demo users and roles (stand-in for SSO/OIDC group claims)
 eval/                   golden set, RAGAS judge wiring, evaluation + ablations, security evaluation
-tests/                  215 offline tests, test doubles, fake_server.py, a labelled test corpus
+tests/                  244 offline tests, test doubles, fake_server.py, a labelled test corpus
 ui/app.py               Streamlit chat UI
 docker-compose.yml      Qdrant, Ollama, Phoenix, API, UI (+ Prometheus)
 pyproject.toml, uv.lock dependencies (runtime + dev/eval/ui groups), exact versions

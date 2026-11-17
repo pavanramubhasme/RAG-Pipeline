@@ -70,6 +70,11 @@ class Settings(BaseSettings):
     cache_enabled: bool = True  # same question again -> answered from memory: no retrieval, no LLM
     cache_max_entries: int = 256
     cache_ttl_s: float = 3600.0  # also cleared whenever documents are ingested
+    # Same meaning, other words -> also from the cache, but only your own earlier questions, only
+    # with the same numbers/codes, and only above this similarity (ragapp/cache.py). Measure with
+    # `uv run python -m eval.cache_calibration` before lowering it.
+    cache_semantic: bool = True
+    cache_similarity: float = 0.98
 
     # --- Access control: who may see what (ragapp/access.py) --------------------------------
     access_control: bool = True  # filter retrieval by the caller's role; False = everyone sees everything

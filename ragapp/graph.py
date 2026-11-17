@@ -15,9 +15,10 @@
 * contextualize turns a follow-up ("what are their addresses?") into a standalone
   question using the recent conversation, so retrieval knows what "their" means. It only
   runs for messages that point back (ragapp/conversation.py): a new topic is searched as typed.
-* cache_lookup / cache_store: the same question again is answered from memory, with no
-  retrieval and no LLM call (ragapp/cache.py). Listed in ``steps`` only on a hit. The
-  caller's access scope is part of the key.
+* cache_lookup / cache_store: the same question again, or one of your own earlier questions
+  with the same meaning and the same numbers, is answered from memory, with no retrieval and
+  no LLM call (ragapp/cache.py). Listed in ``steps`` only on a hit. The caller's access scope
+  is part of the key.
 * retrieve only sees chunks whose classification the caller may see (``scopes``, enforced
   by Qdrant), so every later node, the cache and the citations are limited to them too.
 * Relevance is graded by the cross-encoder's calibrated score, not by asking the
@@ -68,6 +69,10 @@ class RAGState(TypedDict, total=False):
     standalone: str  # question made self-contained from history (== question if no history)
     context_resolved: bool  # False: a follow-up could not be resolved (LLM failed or rewrite rejected)
     cached: bool  # answered from the answer cache
+    user: str | None  # who asks: same-meaning cache hits only come from your own questions
+    question_vector: list[float] | None  # embedding of the question, computed once by cache_lookup
+    cache_similar_to: str | None  # same-meaning hit: the earlier question it matched
+    cache_similarity: float | None
     top_k: int | None
     scopes: list[str] | None  # classification labels the caller may see; None = all
     search_query: str  # what we actually search for (rewritten on retry)
@@ -114,6 +119,7 @@ def build_graph(
     settings: Settings,
     guardrails: Guardrails | None = None,
     cache: AnswerCache | None = None,
+    embed: Callable[[str], list[float]] | None = None,
 ):
     entry = "cache_lookup" if cache is not None else "retrieve"  # first node after the guards
     finish = "cache_store" if cache is not None else END  # last node of answers and refusals
@@ -170,10 +176,22 @@ def build_graph(
     def cache_lookup(state: RAGState) -> dict:
         if state.get("context_resolved") is False:  # "those" still unresolved: not a safe key
             return {"cached": False}
-        hit = cache.get(cache_key(state))
-        if hit is None:
-            return {"cached": False}
-        return {**hit, "cached": True, "steps": ["cache_hit"]}
+        found = cache.lookup(
+            cache_key(state),
+            user=state.get("user"),
+            question=_question(state),
+            embed=embed if settings.cache_semantic else None,
+            threshold=settings.cache_similarity,
+        )
+        if found.value is None:
+            return {"cached": False, "question_vector": found.vector}
+        return {
+            **found.value,
+            "cached": True,
+            "cache_similar_to": found.similar_to,
+            "cache_similarity": found.similarity,
+            "steps": ["cache_hit"],
+        }
 
     def route_after_cache(state: RAGState) -> str:
         return END if state.get("cached") else "retrieve"
@@ -187,7 +205,13 @@ def build_graph(
 
     def cache_store(state: RAGState) -> dict:
         if cacheable(state):
-            cache.put(cache_key(state), {field: state.get(field) for field in CACHED_FIELDS})
+            cache.put(
+                cache_key(state),
+                {field: state.get(field) for field in CACHED_FIELDS},
+                user=state.get("user"),
+                question=_question(state),
+                vector=state.get("question_vector"),
+            )
         return {}
 
     def retrieve(state: RAGState) -> dict:

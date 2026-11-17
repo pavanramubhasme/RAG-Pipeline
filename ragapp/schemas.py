@@ -60,6 +60,10 @@ class QueryResponse(BaseModel):
     cached: bool = Field(
         default=False, description="answered from the answer cache: no retrieval, no LLM call"
     )
+    cache_similar_to: str | None = Field(
+        default=None, description="cache hit by meaning: your earlier question it matched"
+    )
+    cache_similarity: float | None = Field(default=None, description="similarity of that match (0-1)")
     blocked: bool = Field(default=False, description="stopped by the input guardrails")
     guardrails: list[str] = Field(
         default_factory=list,

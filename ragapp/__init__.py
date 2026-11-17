@@ -2,7 +2,7 @@
 
 import os
 
-__version__ = "6.2.0"
+__version__ = "6.3.0"
 
 # Local services (Ollama, this API, Phoenix) must never be reached through a proxy. Company laptops
 # often set HTTP(S)_PROXY with NO_PROXY=localhost only, which sends http://127.0.0.1:... to the
