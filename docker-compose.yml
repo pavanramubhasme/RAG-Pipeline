@@ -1,0 +1,99 @@
+# Full stack:  docker compose up --build
+#   UI http://localhost:8501   API http://localhost:8000/docs   Traces http://localhost:6006
+#   MCP (streamable HTTP) http://localhost:8001/mcp
+#   + Prometheus http://localhost:9090 with:  docker compose --profile monitoring up --build
+#
+# On a Mac, Ollama in Docker cannot use the GPU. Run Ollama natively instead:
+#   DOCKER_LLM_URL=http://host.docker.internal:11434 docker compose up --build --no-deps qdrant phoenix api mcp ui
+#
+# Docker Compose also reads .env for ${...} values; DOCKER_* names keep the local
+# RAG_LLM_BASE_URL=http://127.0.0.1:11434 from leaking into the containers.
+
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.20.0 # pinned: client and server minor versions must match
+    ports: ["127.0.0.1:6333:6333"]
+    volumes: [qdrant_data:/qdrant/storage]
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest # pin a version tag for real deployments
+    ports: ["127.0.0.1:11434:11434"]
+    volumes: [ollama_data:/root/.ollama]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      retries: 12
+    # NVIDIA GPU: uncomment
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices: [{ driver: nvidia, count: all, capabilities: [gpu] }]
+
+  ollama-pull: # one-shot job: downloads the LLM into the shared volume
+    image: ollama/ollama:latest
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    entrypoint: ["ollama", "pull", "${RAG_LLM_MODEL:-granite4:3b}"]
+    depends_on:
+      ollama: { condition: service_healthy }
+    restart: "no"
+
+  phoenix: # trace UI + OTLP collector (http://localhost:6006)
+    image: arizephoenix/phoenix:latest # pin a version tag for real deployments
+    ports: ["127.0.0.1:6006:6006"]
+    environment:
+      PHOENIX_WORKING_DIR: /data
+    volumes: [phoenix_data:/data]
+    restart: unless-stopped
+
+  api:
+    build: .
+    environment: &api_env
+      RAG_QDRANT_URL: http://qdrant:6333
+      RAG_LLM_BASE_URL: ${DOCKER_LLM_URL:-http://ollama:11434}
+      RAG_LLM_MODEL: ${RAG_LLM_MODEL:-granite4:3b}
+      RAG_API_KEY: ${RAG_API_KEY:-}
+      RAG_TRACING_ENABLED: "true"
+      RAG_OTLP_ENDPOINT: http://phoenix:6006/v1/traces
+    ports: ["8000:8000"]
+    depends_on:
+      qdrant: { condition: service_started }
+      phoenix: { condition: service_started }
+      ollama-pull: { condition: service_completed_successfully }
+    restart: unless-stopped
+
+  mcp: # MCP server for Claude Desktop / Cursor / agents, over streamable HTTP
+    build: .
+    command: ["python", "-m", "ragapp.mcp_server", "--transport", "streamable-http", "--host", "0.0.0.0", "--port", "8001"]
+    environment:
+      <<: *api_env
+      RAG_API_URL: http://api:8000
+    ports: ["127.0.0.1:8001:8001"]
+    depends_on: [api]
+    restart: unless-stopped
+
+  ui:
+    build:
+      context: .
+      dockerfile: ui/Dockerfile
+    environment:
+      RAG_API_URL: http://api:8000
+      RAG_API_KEY: ${RAG_API_KEY:-}
+      RAG_TRACES_URL: http://localhost:6006
+    ports: ["8501:8501"]
+    depends_on: [api]
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:latest
+    profiles: [monitoring]
+    volumes: ["./ops/prometheus.yml:/etc/prometheus/prometheus.yml:ro"]
+    ports: ["127.0.0.1:9090:9090"]
+    depends_on: [api]
+
+volumes:
+  qdrant_data:
+  ollama_data:
+  phoenix_data:

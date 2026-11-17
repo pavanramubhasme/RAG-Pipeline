@@ -1,0 +1,58 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v7 # installs uv; uv installs Python 3.12 from .python-version
+        with:
+          enable-cache: true
+      - name: Install (fails if uv.lock is out of date)
+        run: uv sync --locked
+      - name: Lint
+        run: uv run ruff check . && uv run ruff format --check .
+      - name: Tests (offline, test doubles; covers graph, API, MCP, tracing, RAGAS wiring)
+        run: uv run pytest
+      - name: Eval harness smoke test (fake judge)
+        run: uv run python -m eval.run_eval --fake-models --compare-agentic
+      - name: Security gate (fails if any forbidden value is shown to the wrong user)
+        run: >-
+          uv run python -m eval.security_eval --fake-models --docs tests/data/secure
+          --cases tests/data/secure_cases.jsonl
+
+  retrieval-quality-gate:
+    # Real open-source retrieval models, no LLM needed: fail the build if retrieval regresses.
+    needs: test
+    runs-on: ubuntu-latest
+    env:
+      RAG_MODEL_CACHE_DIR: .cache/models
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - uses: actions/cache@v4
+        with:
+          path: .cache/models
+          key: models-${{ hashFiles('ragapp/config.py') }}
+      - run: uv sync --locked
+      - run: uv run python -m eval.run_eval --ablation
+      - run: uv run python -m eval.run_eval --retrieval-only --min-hit-rate 0.8
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: eval-reports
+          path: eval/results/
+
+  docker:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t rag-showcase:ci . && docker build -f ui/Dockerfile -t rag-showcase-ui:ci .

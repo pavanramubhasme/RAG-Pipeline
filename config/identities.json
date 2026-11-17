@@ -1,0 +1,21 @@
+{
+  "_comment": "DEMO identities for the Northstar test corpus. The API resolves the X-API-Key header to a user and role; the role lists the classification labels it may see. In production, roles come from SSO/OIDC group claims, not from a file in the repository, and keys are never committed.",
+  "roles": {
+    "visitor": {"scopes": ["PUBLIC"]},
+    "employee": {"scopes": ["PUBLIC", "INTERNAL"]},
+    "hr_manager": {"scopes": ["PUBLIC", "INTERNAL", "CONFIDENTIAL:HR"]},
+    "finance_manager": {"scopes": ["PUBLIC", "INTERNAL", "CONFIDENTIAL:FINANCE"]},
+    "support_agent": {"scopes": ["PUBLIC", "INTERNAL", "CONFIDENTIAL:CUSTOMER"]},
+    "security_analyst": {"scopes": ["PUBLIC", "INTERNAL", "RESTRICTED:SECURITY"]},
+    "platform_admin": {"scopes": ["PUBLIC", "INTERNAL", "RESTRICTED:PLATFORM"], "can_ingest": true}
+  },
+  "users": {
+    "visitor_demo": {"key": "visitor-demo-key", "role": "visitor"},
+    "employee_demo": {"key": "employee-demo-key", "role": "employee"},
+    "hr_demo": {"key": "hr-demo-key", "role": "hr_manager"},
+    "finance_demo": {"key": "finance-demo-key", "role": "finance_manager"},
+    "support_demo": {"key": "support-demo-key", "role": "support_agent"},
+    "sec_demo": {"key": "sec-demo-key", "role": "security_analyst"},
+    "admin_demo": {"key": "admin-demo-key", "role": "platform_admin"}
+  }
+}

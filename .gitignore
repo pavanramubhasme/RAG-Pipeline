@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.qdrant/
+.env
+.cache/
+eval/results/*.json
+eval/results/*.md
+
+# Your own documents (may be copyrighted or confidential): never commit
+data/private/

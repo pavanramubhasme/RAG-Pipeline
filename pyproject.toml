@@ -1,0 +1,63 @@
+[project]
+name = "rag-showcase"
+version = "5.0.0"
+description = "Agentic RAG on LangChain + LangGraph with MCP, RAGAS and OpenTelemetry; open-source models only"
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+# Runtime: API, MCP server, CLI. Exact pins; uv.lock pins every transitive dependency too.
+dependencies = [
+    "langchain==1.5.0",
+    "langchain-core==1.8.1",
+    "langchain-community==0.4.2",
+    "langchain-text-splitters==1.1.3",
+    "langchain-qdrant==1.1.0",
+    "langchain-ollama==1.1.0",
+    "langgraph==1.2.22",
+    "langchain-mcp-adapters==0.3.2",
+    "mcp==1.30.0",
+    "fastembed==0.9.1",
+    "qdrant-client==1.20.0",
+    "fastapi==0.163.1",
+    "uvicorn[standard]==0.54.0",
+    "httpx==0.28.1",
+    "pydantic==2.14.3",
+    "pydantic-settings==2.16.3",
+    "pypdf==7.1.0",
+    "python-multipart==0.0.33",
+    "prometheus-client==0.26.0",
+    "openinference-instrumentation-langchain==0.1.86",
+    "opentelemetry-sdk==1.45.2",
+    "opentelemetry-exporter-otlp-proto-http==1.45.2",
+]
+
+[dependency-groups]
+eval = ["ragas==0.4.4"]  # kept out of the runtime image
+ui = ["streamlit==1.67.0", "httpx==0.28.1"]  # the UI only talks HTTP to the API
+dev = [
+    { include-group = "eval" },
+    "pytest==9.2.0",
+    "ruff==0.17.5",
+]
+
+[tool.uv]
+package = false  # an application, not a library: run from the repo root
+default-groups = ["dev", "eval", "ui"]  # `uv sync` installs everything for local work
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore:Using `httpx` with `starlette.testclient`",
+    "ignore:Payload indexes have no effect",
+]
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = ["fastapi.Depends", "fastapi.File", "fastapi.Header"]
