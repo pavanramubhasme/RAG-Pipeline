@@ -17,7 +17,7 @@ jobs:
         run: uv sync --locked --no-group docling
       - name: Lint
         run: uv run ruff check . && uv run ruff format --check .
-      - name: Tests (offline, test doubles; covers graph, API, MCP, tracing, RAGAS wiring)
+      - name: Tests (offline, test doubles; covers graph, API, access control, tracing, RAGAS wiring)
         run: uv run pytest
       - name: Eval harness smoke test (fake judge)
         run: uv run python -m eval.run_eval --fake-models --compare-agentic

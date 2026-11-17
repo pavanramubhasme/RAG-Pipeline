@@ -24,7 +24,6 @@ COPY config ./config
 RUN python -m ragapp.cli warmup
 
 COPY data ./data
-COPY examples ./examples
 
 RUN useradd --create-home --uid 1000 app && chown -R app /app /models
 USER app

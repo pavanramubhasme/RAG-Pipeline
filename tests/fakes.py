@@ -1,6 +1,6 @@
 """Deterministic test doubles implementing the real LangChain / RAGAS interfaces.
 
-The whole system (graph, API, MCP server, evaluation, tracing) runs offline in
+The whole system (graph, API, evaluation, tracing) runs offline in
 seconds, so the tests check *our* logic rather than a model's mood.
 """
 

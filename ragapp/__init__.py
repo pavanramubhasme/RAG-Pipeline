@@ -1,8 +1,8 @@
-"""Agentic RAG on LangChain + LangGraph, with MCP, RAGAS and OpenTelemetry. Open-source models only."""
+"""Agentic RAG on LangChain + LangGraph, with RAGAS and OpenTelemetry. Open-source models only."""
 
 import os
 
-__version__ = "6.1.0"
+__version__ = "6.2.0"
 
 # Local services (Ollama, this API, Phoenix) must never be reached through a proxy. Company laptops
 # often set HTTP(S)_PROXY with NO_PROXY=localhost only, which sends http://127.0.0.1:... to the
@@ -23,4 +23,4 @@ def bypass_proxy_for_loopback() -> None:
         os.environ["no_proxy"] = value
 
 
-bypass_proxy_for_loopback()  # before any HTTP client (Ollama, OTLP exporter, MCP) is created
+bypass_proxy_for_loopback()  # before any HTTP client (Ollama, OTLP exporter) is created

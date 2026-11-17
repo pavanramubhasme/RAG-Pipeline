@@ -32,7 +32,7 @@ def test_loopback_bypasses_the_proxy(company_proxy):
 
     bypass_proxy_for_loopback()
     assert os.environ["NO_PROXY"].split(",") == ["localhost", ".corp.example", "127.0.0.1", "::1"]
-    client = httpx.Client()  # Ollama and MCP clients are httpx
+    client = httpx.Client()  # the Ollama client and the UI use httpx
     assert not _uses_proxy(client, "http://127.0.0.1:11434/api/tags")
     assert not _uses_proxy(client, "http://localhost:8000/health")
     assert _uses_proxy(client, "https://huggingface.co/BAAI/bge-small-en-v1.5")  # downloads still proxied

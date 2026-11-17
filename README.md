@@ -1,4 +1,4 @@
-# RAG Showcase v6 — secure agentic RAG with LangChain, LangGraph, MCP, RAGAS and OpenTelemetry
+# RAG Showcase v6 — secure agentic RAG with LangChain, LangGraph, RAGAS and OpenTelemetry
 
 Ask questions about your documents and get grounded, cited answers, or an honest *"I don't know"*. Every model is free and open source and runs on your machine: no API keys, no data leaves the laptop.
 
@@ -16,7 +16,6 @@ Ask questions about your documents and get grounded, cited answers, or an honest
 |---|---|
 | **LangChain** | Loaders, Markdown/recursive splitters, `QdrantVectorStore` in hybrid mode, FastEmbed embeddings, `ChatOllama`, LCEL prompt chains, a custom `BaseRetriever` and a custom `BaseDocumentCompressor` reranker |
 | **LangGraph** | Agentic workflow: *contextualize follow-ups* → retrieve → grade → *rewrite and retry* or refuse → generate → grounding check |
-| **MCP** | MCP server exposing `search_documents`, `ask_knowledge_base`, `list_sources` (stdio + streamable HTTP), plus an MCP **client** agent built on LangChain/LangGraph |
 | **Docling** | Layout-aware PDF parsing: layout model + TableFormer turn each page into Markdown (tables, headings); pypdf as fallback |
 | **RAGAS** | Faithfulness, answer relevancy, context precision, context recall, factual correctness, judged by a **local** LLM |
 | **Access control** | Classification labels read from the documents at ingestion; API key → user → role → allowed labels; filter applied inside the Qdrant search; per-role answer cache; security evaluation with a CI gate |
@@ -29,13 +28,10 @@ Ask questions about your documents and get grounded, cited answers, or an honest
 flowchart LR
     subgraph Clients
         UI[Streamlit UI]
-        CD[Claude Desktop / Cursor]
-        AG[LangGraph agent<br/>examples/mcp_agent.py]
+        CLI[CLI]
     end
-    CD -- MCP --> MCP[MCP server]
-    AG -- MCP --> MCP
-    MCP -- REST --> API
     UI -- REST --> API[FastAPI]
+    CLI --> G
     API --> ID[identity<br/>API key → user → role<br/>→ allowed labels]
     ID --> G
 
@@ -74,7 +70,6 @@ Print the live graph any time: `uv run python -m ragapp.cli graph`.
 | Reranker | `Xenova/ms-marco-MiniLM-L-6-v2` cross-encoder | Apache-2.0 |
 | Vector DB | Qdrant 1.20 | Apache-2.0 |
 | Orchestration | LangChain 1.5, LangGraph 1.2 | MIT |
-| Protocol | MCP Python SDK 1.30, langchain-mcp-adapters | MIT |
 | Evaluation | RAGAS 0.4 | Apache-2.0 |
 | Tracing | OpenTelemetry + OpenInference → Arize Phoenix (free, Elastic License 2.0) or Langfuse (MIT) | — |
 | Metrics | Prometheus client + server | Apache-2.0 |
@@ -87,13 +82,13 @@ Dependencies are managed with **uv** (`pyproject.toml` + `uv.lock`, Python pinne
 ```bash
 uv sync                                                   # env + Python 3.12 + exact locked deps
 ollama pull granite4:3b
-uv run python -m ragapp.cli warmup && uv run pytest       # 221 tests, offline
+uv run python -m ragapp.cli warmup && uv run pytest       # 215 tests, offline
 uv run python -m ragapp.cli ingest data/sample
 uv run python -m ragapp.cli ask "What's the WFH quota?"
 uv run uvicorn ragapp.api:app --port 8000                 # then: uv run streamlit run ui/app.py
 ```
 
-Or everything at once: `docker compose up --build` → UI `:8501`, API `:8000/docs`, traces `:6006`, MCP `:8001/mcp`.
+Or everything at once: `docker compose up --build` → UI `:8501`, API `:8000/docs`, traces `:6006`.
 
 ## What makes it production-grade
 
@@ -113,7 +108,7 @@ Or everything at once: `docker compose up --build` → UI `:8501`, API `:8000/do
 - **Security basics**: constant-time key comparison, upload type/size limits, path-traversal-safe file names, prompt-injection escaping, question text never logged.
 - **Operability**: liveness vs readiness probes, retries with exponential backoff, Prometheus metrics (latency per graph node, refusals, rewrites, ungrounded answers), traces linked to request IDs, Docker Compose, CI with a quality gate.
 - **Answer cache**: a repeated question is answered from memory in milliseconds instead of seconds. Exact match after normalisation (no semantic guessing), only grounded answers and genuine refusals are stored, personal data is masked in the key, and the cache is cleared whenever documents change.
-- **Tested like a product**: 221 offline tests with test doubles cover chunking, retrieval modes, every graph path, access control for every demo role, the API, MCP over the real protocol, the tracing output and the RAGAS wiring.
+- **Tested like a product**: 215 offline tests with test doubles cover chunking, retrieval modes, every graph path, access control for every demo role, the API, the tracing output and the RAGAS wiring.
 
 ## Evaluation
 
@@ -149,14 +144,6 @@ The reranker cuts the noise sent to the LLM: precision@4 0.25 → 0.79 at the sa
 - **Metrics**: `GET /metrics` (Prometheus format); `docker compose --profile monitoring up` adds a Prometheus server on `:9090`.
 - **Logs**: one JSON line per event with request ID, path through the graph and per-node timings.
 
-## MCP
-
-- **stdio** for desktop clients: `uv run python -m ragapp.mcp_server`
-- **streamable HTTP** for networked agents: `uv run python -m ragapp.mcp_server --transport streamable-http --port 8001`
-- **Client demo** (a LangChain agent on LangGraph, discovering the tools over MCP): `uv run python examples/mcp_agent.py "Can I take 3 weeks of vacation in summer?"`
-
-The MCP server is a thin adapter over the REST API: one source of truth, one place for auth, and every tool call shows up in the same traces and metrics. Claude Desktop config is in [docs/SETUP.md](docs/SETUP.md#step-13--use-it-from-mcp).
-
 ## Project layout
 
 ```
@@ -173,19 +160,17 @@ ragapp/
   graph.py         LangGraph StateGraph: the agentic workflow
   conversation.py  follow-up detection + check that a rewrite keeps the user's words
   cache.py         answer cache (LRU + TTL, cleared on ingest)
-  service.py       RAGService used by API, CLI, MCP and eval
+  service.py       RAGService used by API, CLI and eval
   factory.py       wires the real open-source models
   api.py           FastAPI: /query /search /sources /ingest /whoami /health /live /metrics
-  mcp_server.py    MCP server (FastMCP)
   guardrails.py    input/output rails: injection rules, secret and PII masking, guard model
   observability.py OpenTelemetry tracing, Prometheus metrics, JSON logs
   cli.py           warmup / ingest / ask / graph
-examples/mcp_agent.py   MCP client agent (langchain-mcp-adapters + create_agent)
 config/identities.json  demo users and roles (stand-in for SSO/OIDC group claims)
 eval/                   golden set, RAGAS judge wiring, evaluation + ablations, security evaluation
-tests/                  221 offline tests, test doubles, fake_server.py, a labelled test corpus
+tests/                  215 offline tests, test doubles, fake_server.py, a labelled test corpus
 ui/app.py               Streamlit chat UI
-docker-compose.yml      Qdrant, Ollama, Phoenix, API, MCP, UI (+ Prometheus)
+docker-compose.yml      Qdrant, Ollama, Phoenix, API, UI (+ Prometheus)
 pyproject.toml, uv.lock dependencies (runtime + dev/eval/ui groups), exact versions
 ```
 

@@ -149,7 +149,7 @@ def create_app(
         service: RAGService = Depends(get_service),
         identity: Identity = Depends(get_identity),
     ):
-        """Retrieval only (hybrid + rerank), no LLM. Used by the MCP server."""
+        """Retrieval only (hybrid + rerank), no LLM: see what the search finds, without an answer."""
         return SearchResponse(results=service.search(body.query, top_k=body.top_k, identity=identity))
 
     @app.get("/sources", tags=["rag"])

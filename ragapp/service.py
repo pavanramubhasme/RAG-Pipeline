@@ -1,4 +1,4 @@
-"""RAGService: the one object the API, CLI, MCP server and evaluation all use."""
+"""RAGService: the one object the API, CLI and evaluation all use."""
 
 import logging
 import re

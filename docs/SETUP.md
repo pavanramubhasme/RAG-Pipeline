@@ -1,6 +1,6 @@
 # Setup and run, step by step (with uv)
 
-Commands are for **Windows PowerShell**; macOS/Linux variants are in brackets. Steps 1–8 get the core working; 9–15 add the UI, tracing, MCP, metrics and evaluation.
+Commands are for **Windows PowerShell**; macOS/Linux variants are in brackets. Steps 1–8 get the core working; 9–14 add the UI, tracing, access control, metrics and evaluation.
 
 The project uses **[uv](https://docs.astral.sh/uv/)**: `pyproject.toml` declares the dependencies, `uv.lock` pins every package to an exact version, and `.python-version` pins Python 3.12. uv downloads that Python for you, so you don't need to install Python separately.
 
@@ -33,7 +33,7 @@ cd C:\path\to\rag-showcase-v6
 setx UV_CACHE_DIR D:\uv-cache          # optional: keep uv's download cache off a full C: drive
 $env:UV_CACHE_DIR = "D:\uv-cache"
 uv sync                                 # adds Docling + PyTorch (about 1 GB)
-uv run python -m pytest                 # 221 passed
+uv run python -m pytest                 # 215 passed
 Remove-Item -Recurse .qdrant            # chunks change with Docling: rebuild the index once
 uv run python -m ragapp.cli ingest data\private
 ```
@@ -65,7 +65,7 @@ Optional stronger judge for RAGAS (about 5 GB): `ollama pull qwen3:8b`, then set
 copy .env.example .env        # [cp .env.example .env]
 ```
 
-**Upgrading an existing `.env` to v5:** set `RAG_API_KEY=employee-demo-key` (the UI's default user and the MCP server's identity), and change the two masking lines to `RAG_REDACT_INPUT_PII=["secret","email","phone","iban","card"]` and `RAG_REDACT_OUTPUT_PII=["secret","iban","card"]`. Everything else new has safe defaults.
+**Upgrading an existing `.env` to v5:** set `RAG_API_KEY=employee-demo-key` (the UI's default user), and change the two masking lines to `RAG_REDACT_INPUT_PII=["secret","email","phone","iban","card"]` and `RAG_REDACT_OUTPUT_PII=["secret","iban","card"]`. Everything else new has safe defaults.
 
 Then put your free Hugging Face token (huggingface.co/settings/tokens) into the `HF_TOKEN=` line of `.env`. Without it, the model download can fail with `403 Forbidden` on company networks.
 
@@ -90,7 +90,7 @@ Expect: `Models cached.`
 uv run pytest
 ```
 
-Expect: `221 passed` (220 + 1 skipped without Docling). Don't continue until this passes.
+Expect: `215 passed` (214 + 1 skipped without Docling). Don't continue until this passes.
 
 ## Step 8 — Index the documents and ask questions
 
@@ -227,39 +227,11 @@ To turn access control off (everyone sees everything): `RAG_ACCESS_CONTROL=false
 
 Open http://localhost:6006, select the project **rag-showcase**, and click a trace: graph run → nodes → prompts → LLM calls with token counts → retrieved documents with scores.
 
-## Step 13 — Use it from MCP
-
-**A. MCP client agent (terminal 3, with the API running):**
-
-```powershell
-uv run python examples/mcp_agent.py "Can I take 3 weeks of vacation in summer, and how early must I ask?"
-```
-
-The agent starts the MCP server, discovers its tools, decides which ones to call (printed) and answers.
-
-**B. Claude Desktop or any MCP client.** Add this to `claude_desktop_config.json` (Claude Desktop → Settings → Developer → Edit Config), fix the path, and restart the app:
-
-```json
-{
-  "mcpServers": {
-    "nordwind-kb": {
-      "command": "uv",
-      "args": ["--directory", "C:\\path\\to\\rag-showcase-v6", "run", "python", "-m", "ragapp.mcp_server"],
-      "env": { "RAG_API_URL": "http://127.0.0.1:8000" }
-    }
-  }
-}
-```
-
-If the client can't find `uv`, use its full path (Windows: `C:\\Users\\<you>\\.local\\bin\\uv.exe`; macOS/Linux: output of `which uv`).
-
-**C. Over HTTP:** `uv run python -m ragapp.mcp_server --transport streamable-http --port 8001` serves the tools at `http://localhost:8001/mcp`.
-
-## Step 14 — Metrics
+## Step 13 — Metrics
 
 Open http://localhost:8000/metrics: `rag_stage_duration_seconds` (latency per graph node), `rag_refusals_total`, `rag_query_rewrites_total`, `rag_ungrounded_answers_total`, `rag_guardrail_events_total` (blocked requests, redactions, quarantined chunks), `rag_answer_cache_total` (cache hits and misses).
 
-## Step 15 — Evaluate (before the interview)
+## Step 14 — Evaluate (before the interview)
 
 ```powershell
 uv run python -m eval.run_eval --retrieval-only     # seconds, no LLM
@@ -291,17 +263,17 @@ A chunk counts as relevant for precision/recall@k if it comes from the reference
 
 With only one answer chunk per question in the golden set, `precision@4` can't exceed 0.25 when 4 chunks are returned; the reranker threshold raises it by dropping weak chunks. That difference is what the ablation shows.
 
-## Step 16 — Stop everything
+## Step 15 — Stop everything
 
 `Ctrl+C` in terminals 1 and 2, then `docker rm -f phoenix`.
 
-## Step 17 (optional) — Everything in Docker
+## Step 16 (optional) — Everything in Docker
 
 ```powershell
 docker compose up --build
 ```
 
-UI http://localhost:8501 · API http://localhost:8000/docs · traces http://localhost:6006 · MCP http://localhost:8001/mcp. Add Prometheus with `docker compose --profile monitoring up --build` (http://localhost:9090). Index the samples by uploading them in the UI. The images install dependencies with `uv sync --frozen` from the same `uv.lock`, without Docling (to keep them small), so PDFs are parsed with pypdf there; add `--group docling` to the `uv sync` line in `Dockerfile` to change that.
+UI http://localhost:8501 · API http://localhost:8000/docs · traces http://localhost:6006. Add Prometheus with `docker compose --profile monitoring up --build` (http://localhost:9090). Index the samples by uploading them in the UI. The images install dependencies with `uv sync --frozen` from the same `uv.lock`, without Docling (to keep them small), so PDFs are parsed with pypdf there; add `--group docling` to the `uv sync` line in `Dockerfile` to change that.
 
 ## Managing dependencies with uv
 
@@ -332,8 +304,6 @@ Commit both `pyproject.toml` and `uv.lock`.
 | `uv trampoline failed to canonicalize script path` | A broken `.exe` launcher in `.venv\Scripts`. Use `uv run python -m pytest` (or `python -m uvicorn`, `python -m streamlit`), or repair: `uv sync --reinstall-package pytest --reinstall-package uvicorn --reinstall-package streamlit` |
 | `ModuleNotFoundError` | Run commands with `uv run ...` from the project folder, or run `uv sync` again |
 | No traces in Phoenix | `RAG_TRACING_ENABLED=true` in `.env`, Phoenix running, API restarted |
-| MCP agent: "API unreachable" | Start the API first (Step 10) |
-| MCP agent never calls a tool | Use a stronger tool-calling model: `RAG_LLM_MODEL=qwen3:8b` |
 | A normal question is blocked | A rule matched by mistake: tell me the question, or set `RAG_GUARDRAILS_ENABLED=false` while testing |
 | An e-mail address in my question is replaced by `[EMAIL]` | Intended (privacy). To keep e-mails: `RAG_REDACT_INPUT_PII=["phone","iban","card"]` |
 | Slow | Normal on CPU. `RAG_GROUNDING_CHECK=false` saves one LLM call per question |
@@ -346,7 +316,6 @@ Commit both `pyproject.toml` and `uv.lock`.
 | Every answer is "I don't know" after upgrading to v5 | The index was built before v5 and has no labels: rebuild it (Step 11c). Or you are signed in as `visitor_demo`, who only sees PUBLIC pages |
 | UI: "The API did not accept this user's key" / 401 | The key isn't in `config/identities.json`, or `RAG_API_KEY` in `.env` has a typo |
 | Upload fails with 403 | Only roles with `can_ingest` (here `admin_demo`) may add documents |
-| MCP agent finds nothing | It runs as the user of `RAG_API_KEY`; set `RAG_API_KEY=employee-demo-key` (or another demo key) in `.env` |
 | Model download: `SSL: CERTIFICATE_VERIFY_FAILED` (company network) | Remove `HF_HUB_DISABLE_XET=1` from `.env`: the Xet download client trusts the Windows certificate store, the plain download doesn't. Once the models are in `HF_HOME`, nothing is downloaded again |
 | Ingesting a PDF takes minutes | Docling reads every page with two models: a few seconds per page on a CPU, once per file. `RAG_DOCLING_TABLE_MODE=fast` halves it |
 | `docling_failed_using_pypdf` in the log | Docling couldn't run (usually the model download): check `HF_TOKEN` in `.env`, then ingest the file again. Until then the PDF is indexed with pypdf |

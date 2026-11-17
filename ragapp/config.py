@@ -89,11 +89,9 @@ class Settings(BaseSettings):
     guard_risks: list[str] = ["jailbreak", "harm"]  # risks the guard model checks in each question
     guard_fail_closed: bool = False  # guard model down: False = answer anyway (logged), True = block
 
-    # --- API / MCP ---------------------------------------------------------------------
-    api_key: str | None = (
-        None  # credential the UI/MCP send; checked by the server only if access control is off
-    )
-    api_url: str = "http://127.0.0.1:8000"  # used by the MCP server and the UI
+    # --- API / UI ----------------------------------------------------------------------
+    api_key: str | None = None  # credential the UI sends; checked by the server only if access control is off
+    api_url: str = "http://127.0.0.1:8000"  # where the UI finds the API
     max_upload_mb: int = 20
     log_level: str = "INFO"
 
