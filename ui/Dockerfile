@@ -13,7 +13,7 @@ WORKDIR /ui
 COPY pyproject.toml uv.lock .python-version ./
 # Only the "ui" dependency group (streamlit + httpx), nothing else
 RUN uv sync --frozen --only-group ui --no-install-project
-COPY ui/app.py .
+COPY ui/app.py ui/chat_state.py ./
 COPY config ./config
 
 RUN useradd --create-home --uid 1000 app

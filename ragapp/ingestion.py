@@ -57,7 +57,11 @@ from ragapp.store import KnowledgeStore
 logger = logging.getLogger(__name__)
 SUPPORTED_EXTENSIONS = {".md", ".txt", ".pdf"}
 HEADERS = [("#", "h1"), ("##", "h2"), ("###", "h3")]
-CHUNKING_VERSION = "4"  # bump when the chunking logic changes: forces a re-index of every file
+CHUNKING_VERSION = "8"  # bump when the chunking logic changes: forces a re-index of every file
+# 5: code blocks in PDFs keep their line breaks (Docling text + pypdf layout mode)
+# 6: also paragraphs that look like code; no trailing spaces
+# 7: restored code is always a fenced block (Docling had labelled one snippet a heading)
+# 8: code blocks that follow each other are joined (Docling had cut one snippet into four)
 
 # Numbered headings, e.g. "7.1 Absolute Maximum Ratings" or
 # "8.6.1.3.84 ASI_OUT_CH_EN Register (page = 0x00, address = 0x74) [reset = 0h]"

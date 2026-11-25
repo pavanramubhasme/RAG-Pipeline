@@ -43,6 +43,20 @@ def build_guard_llm(s: Settings):
     )
 
 
+def build_grounding_llm(s: Settings):
+    """Independent model for the grounding check; None = the answering model checks itself."""
+    if not s.grounding_model or s.grounding_model == s.llm_model:
+        return None
+    return ChatOllama(
+        model=s.grounding_model,
+        base_url=s.llm_base_url,
+        temperature=0,
+        seed=s.llm_seed,
+        num_predict=20,  # a verdict: "yes"/"no"
+        client_kwargs={"timeout": s.llm_timeout_s},
+    )
+
+
 def build_dense(s: Settings) -> FastEmbedEmbeddings:
     """The semantic embedding model: used by the search and by the answer cache."""
     return FastEmbedEmbeddings(
@@ -72,5 +86,10 @@ def build_service(settings: Settings | None = None) -> RAGService:
             logger.info("waiting_for_qdrant", extra={"attempt": attempt, "error": str(exc)[:100]})
             time.sleep(1)
     return RAGService(
-        store=store, reranker=reranker, llm=build_llm(s), settings=s, guard_llm=build_guard_llm(s)
+        store=store,
+        reranker=reranker,
+        llm=build_llm(s),
+        settings=s,
+        guard_llm=build_guard_llm(s),
+        grounding_llm=build_grounding_llm(s),
     )

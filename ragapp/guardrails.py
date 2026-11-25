@@ -25,7 +25,7 @@ import re
 from dataclasses import dataclass, field
 
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, BaseMessage, ChatMessage, HumanMessage, SystemMessage
 
 from ragapp import observability as obs
 from ragapp.config import Settings
@@ -164,6 +164,21 @@ def redact(text: str, kinds: list[str]) -> tuple[str, list[str]]:
 
         text = pattern.sub(mask, text)
     return text, found
+
+
+def is_guardian(model: str | None) -> bool:
+    """IBM Granite Guardian models take a risk name and answer yes/no."""
+    return bool(model) and "guardian" in model.lower()
+
+
+def groundedness_messages(context: str, answer: str) -> list[BaseMessage]:
+    """Granite Guardian's RAG check: the "context" role holds the passages, the assistant turn
+    the answer; "Yes" means the answer says something the context doesn't support."""
+    return [
+        SystemMessage(content="groundedness"),
+        ChatMessage(role="context", content=context),
+        AIMessage(content=answer),
+    ]
 
 
 def parse_verdict(text: str) -> bool:

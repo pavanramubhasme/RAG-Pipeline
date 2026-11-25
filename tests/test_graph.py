@@ -173,12 +173,29 @@ def test_follow_ups_are_detected(message):
 @pytest.mark.parametrize(
     "message",
     [
+        "Can you get me the values in hex?",  # seen live: was searched on its own
+        "In binary?",
+        "Show the register values as a table",
+        "Summarize the steps",
+    ],
+)
+def test_requests_to_reshape_the_last_answer_are_follow_ups(message):
+    from ragapp.conversation import is_follow_up
+
+    assert is_follow_up(message)
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
         "Python - parse a CSV safely?",
         "What's the WFH quota?",
         "My wallbox shows E03. What does that mean?",
         "Which registers must be enabled for the microphone use case?",
         "How many days per week can I work from home?",
         "Is there a dress code?",
+        "How do I convert a CSV file to JSON in Python?",
+        "What is the hex value of the reset register in the TAS6424 datasheet?",
     ],
 )
 def test_standalone_questions_are_not_treated_as_follow_ups(message):

@@ -8,8 +8,9 @@ source, grounded = yes, and still wrong: it answered a different question.
 Two deterministic checks, no extra LLM call:
 
 * ``is_follow_up``: only messages that point back ("those registers", "and for ch2?",
-  "is that allowed?") are rewritten with the conversation. Every other message is
-  searched exactly as typed, which also saves one LLM call per question.
+  "is that allowed?", "can you get me the values in hex?") are rewritten with the
+  conversation. Every other message is searched exactly as typed, which also saves one LLM
+  call per question.
 * ``keeps_user_words``: the rewrite must keep the user's own words. If the LLM replaced
   the question with an earlier one, the message is used as typed.
 
@@ -34,6 +35,14 @@ STRONG_REFERENCES = _words(
 # (self-contained). They only count in short messages.
 WEAK_REFERENCES = _words("it this that he she him her his hers one ones such")
 OPENERS = _words("and also but so or plus then")
+# Asking to reshape the last answer ("Can you get me the values in hex?", "as a table?"): a short
+# message with one of these words is about what was just said. Seen live: the hex question was
+# searched on its own and rewritten into "How do I convert decimal values to hexadecimal?".
+TRANSFORMS = _words(
+    "hex hexadecimal binary decimal convert table summarize summarise summary shorter shorten "
+    "simpler simplify translate bullet bullets"
+)
+TRANSFORM_MAX_CONTENT_WORDS = 3
 TWO_WORD_OPENERS = frozenset(["what about", "how about", "what else", "and what", "same for"])
 
 # Words without a topic of their own; everything else counts as a content word.
@@ -70,6 +79,8 @@ def is_follow_up(message: str) -> bool:
     topic = content_words(message)
     if len(topic) <= 1:  # "Why?", "Is that allowed?", "Encoding?"
         return True
+    if any(w in TRANSFORMS for w in words) and len(topic) <= TRANSFORM_MAX_CONTENT_WORDS:
+        return True  # "the values in hex", "as a table, please"
     return any(w in WEAK_REFERENCES for w in words) and len(topic) <= WEAK_MAX_CONTENT_WORDS
 
 

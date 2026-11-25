@@ -1,4 +1,4 @@
-# RAG Pipeline — RAG with LangChain, LangGraph, RAGAS and OpenTelemetry
+# RAG Pipeline — RAG with LangChain, LangGraph, RAGAS and Phoenix/LangSmith tracing
 
 Ask questions about your documents and get grounded, cited answers, or an honest *"I don't know"*. Every model is free and open source and runs on your machine: no API keys, no data leaves the laptop.
 
@@ -20,7 +20,7 @@ Ask questions about your documents and get grounded, cited answers, or an honest
 | **RAGAS** | Faithfulness, answer relevancy, context precision, context recall, factual correctness, judged by a **local** LLM |
 | **Access control** | Classification labels read from the documents at ingestion; API key → user → role → allowed labels; filter applied inside the Qdrant search; per-role answer cache; security evaluation with a CI gate |
 | **Guardrails** | Rule-based prompt-injection blocking, secret and personal-data masking, quarantine of poisoned document chunks, optional open guard model (IBM Granite Guardian via Ollama) |
-| **Observability** | OpenTelemetry traces of every node, prompt, LLM call and retrieval (OpenInference) → Arize Phoenix or Langfuse; Prometheus metrics; JSON logs with request IDs |
+| **Observability** | Traces of every node, prompt, LLM call and retrieval, to a local Arize Phoenix (OpenTelemetry/OpenInference) or to LangSmith (one setting; content hidden by default); Prometheus metrics; JSON logs with request IDs |
 
 ## Architecture
 
@@ -71,7 +71,7 @@ Print the live graph any time: `uv run python -m ragapp.cli graph`.
 | Vector DB | Qdrant 1.20 | Apache-2.0 |
 | Orchestration | LangChain 1.5, LangGraph 1.2 | MIT |
 | Evaluation | RAGAS 0.4 | Apache-2.0 |
-| Tracing | OpenTelemetry + OpenInference → Arize Phoenix (free, Elastic License 2.0) or Langfuse (MIT) | — |
+| Tracing | OpenTelemetry + OpenInference → Arize Phoenix (free, Elastic License 2.0) or Langfuse (MIT); or LangSmith (hosted, free Developer plan) | — |
 | Metrics | Prometheus client + server | Apache-2.0 |
 | Guard model (optional) | IBM Granite Guardian `granite3-guardian:2b` via Ollama | Apache-2.0 |
 
@@ -82,10 +82,10 @@ Dependencies are managed with **uv** (`pyproject.toml` + `uv.lock`, Python pinne
 ```bash
 uv sync                                                   # env + Python 3.12 + exact locked deps
 ollama pull granite4:3b
-uv run python -m ragapp.cli warmup && uv run pytest       # 244 tests, offline
+uv run python -m ragapp.cli warmup && uv run pytest       # 322 tests, offline
 uv run python -m ragapp.cli ingest data/sample
 uv run python -m ragapp.cli ask "What's the WFH quota?"
-uv run uvicorn ragapp.api:app --port 8000                 # then: uv run streamlit run ui/app.py
+uv run uvicorn ragapp.api:app --port 8000                 # then: uv run python -m streamlit run ui/app.py
 ```
 
 Or everything at once: `docker compose up --build` → UI `:8501`, API `:8000/docs`, traces `:6006`.
@@ -93,7 +93,7 @@ Or everything at once: `docker compose up --build` → UI `:8501`, API `:8000/do
 ## What makes it production-grade
 
 - **Structure-aware chunking**: Markdown is split by headings; PDFs are parsed with Docling (tables stay Markdown tables, one row per line; a table cut into several chunks repeats its header row), lose their repeated headers/footers and are split at numbered headings (e.g. one datasheet register per section, even across page breaks). Every chunk starts with its section title, so a piece of a long table still says which register it belongs to.
-- **Retrieval quality**: hybrid search (BM25 catches codes like "E03", dense catches paraphrases), fused server-side with RRF, then a cross-encoder reranks. A calibrated relevance threshold decides whether anything relevant was found. Numbered terms are expanded by rule before the search ("channel 1" ↔ "CH1"), so BM25 and the reranker see the words the document uses.
+- **Retrieval quality**: hybrid search (BM25 catches codes like "E03", dense catches paraphrases), fused server-side with RRF, then a cross-encoder reranks. A calibrated relevance threshold decides whether anything relevant was found. Numbered terms are expanded by rule before the search ("channel 1" ↔ "CH1"), so BM25 and the reranker see the words the document uses. A question about a register address ("register at 0x04") keeps only chunks whose heading declares that address, so a register whose *default value* is 0x04 can't win.
 - **Agentic, but cheap**: the graph only calls the LLM to rewrite when retrieval found nothing, and grades chunks with the reranker score instead of one LLM call per chunk.
 - **Conversation memory**: follow-ups such as "give me these register addresses" are rewritten into a standalone question from the last turns before retrieval. The API stays stateless (the client sends recent history), so it scales across replicas.
 - **Access control** (see `ragapp/access.py`): labels come from the documents (a page's "Classification: CONFIDENTIAL:HR" line or title, else the cover page's label, else INTERNAL: deny by default); a chunk never mixes two labels. The role comes from the API key on the server, never from the question text. The filter runs inside the Qdrant search, so forbidden chunks never reach the reranker, the LLM, the cache, citations, logs or traces, and a defensive check fails closed if one ever did. A forbidden question gets the same "I don't know" as an unknown one, so it doesn't even reveal that the document exists. Only roles with `can_ingest` may upload.
@@ -102,13 +102,13 @@ Or everything at once: `docker compose up --build` → UI `:8501`, API `:8000/do
   - *documents*: chunks containing injection text are quarantined at ingestion (defence against indirect prompt injection); secrets (API keys, tokens, passwords, connection strings) are masked before indexing, and e-mails and phone numbers in CONFIDENTIAL/RESTRICTED chunks too;
   - *output*: secrets, IBANs and card numbers are masked in answers;
   - *optional guard model*: IBM Granite Guardian (Apache-2.0) checks each question for jailbreak/harm (`RAG_GUARD_MODEL=granite3-guardian:2b`), fail-open or fail-closed by setting.
-- **Hallucination controls**: refuse when nothing is relevant; a deterministic number check refuses any answer that states a number found in neither the sources nor the question (a small LLM judge once let an invented "$1.2 billion" through); context-only prompt with mandatory citations (invalid citation numbers are dropped); an LLM grounding check flags unsupported answers; RAGAS faithfulness is measured offline.
+- **Hallucination controls**: refuse when nothing is relevant; a deterministic number check refuses any answer that states a number found in neither the sources nor the question (a small LLM judge once let an invented "$1.2 billion" through); context-only prompt with mandatory citations (invalid citation numbers are dropped); a grounding check flags unsupported answers, done by an independent model if `RAG_GROUNDING_MODEL` is set (IBM Granite Guardian's trained groundedness check), so the answering model doesn't grade itself; RAGAS faithfulness is measured offline.
 - **Graceful degradation**: if the rewrite or grounding LLM call fails, the system refuses or skips the check instead of returning an error; only answer generation failures return 503.
 - **Idempotent ingestion**: content hash per file, deterministic chunk IDs; unchanged files skipped, changed files replaced.
 - **Security basics**: constant-time key comparison, upload type/size limits, path-traversal-safe file names, prompt-injection escaping, question text never logged.
 - **Operability**: liveness vs readiness probes, retries with exponential backoff, Prometheus metrics (latency per graph node, refusals, rewrites, ungrounded answers), traces linked to request IDs, Docker Compose, CI with a quality gate.
 - **Answer cache**: a repeated question is answered from memory in milliseconds instead of seconds: the same question (any user with the same access), or one of your own earlier questions in other words. A reworded match must have the same numbers and codes (2025 ≠ 2026, CH1 ≠ CH2), the same content words with at most one phrase moved (similarity ≥ 0.90), or almost the same meaning (≥ 0.98, calibrated with `eval/cache_calibration.py`, a CI gate). Only grounded answers and genuine refusals are stored, personal data is masked in the key, and the cache is cleared whenever documents change.
-- **Tested like a product**: 244 offline tests with test doubles cover chunking, retrieval modes, every graph path, access control for every demo role, the API, the tracing output and the RAGAS wiring.
+- **Tested like a product**: 322 offline tests with test doubles cover chunking, retrieval modes, every graph path, access control for every demo role, the API, the tracing output and the RAGAS wiring.
 
 ## Evaluation
 
@@ -139,7 +139,7 @@ The reranker cuts the noise sent to the LLM: precision@4 0.25 → 0.79 at the sa
 
 ## Observability
 
-- **Traces**: set `RAG_TRACING_ENABLED=true` and start Phoenix (`docker run -p 6006:6006 arizephoenix/phoenix:latest`). Each question becomes one trace: graph → nodes → prompts → LLM calls with token counts → retrieved documents with scores. The API request ID is attached as metadata.
+- **Traces**: set `RAG_TRACING_ENABLED=true` and start Phoenix (`docker run -p 6006:6006 arizephoenix/phoenix:latest`), or set `RAG_TRACING_BACKEND=langsmith` plus `RAG_LANGSMITH_API_KEY` to use LangSmith (questions, chunks and answers are hidden unless `RAG_LANGSMITH_HIDE_CONTENT=false`). Each question becomes one trace: graph → nodes → prompts → LLM calls with token counts → retrieved documents with scores. The API request ID is attached as metadata.
 - **Langfuse instead**: point `RAG_OTLP_ENDPOINT` at `https://<langfuse-host>/api/public/otel/v1/traces` and put the Basic-auth header in `RAG_OTLP_HEADERS`. No code change.
 - **Metrics**: `GET /metrics` (Prometheus format); `docker compose --profile monitoring up` adds a Prometheus server on `:9090`.
 - **Logs**: one JSON line per event with request ID, path through the graph and per-node timings.
@@ -156,6 +156,8 @@ ragapp/
   reranker.py      FastEmbed cross-encoder as a LangChain BaseDocumentCompressor
   retriever.py     LangChain BaseRetriever: hybrid search + rerank + threshold
   query_expansion.py  "channel 1" <-> "CH1" rules (no LLM)
+  register_lookup.py  "register at 0x04": filter by the address in the heading
+  code_answers.py  code in answers completed from the retrieved code block
   prompts.py       ChatPromptTemplates (answer, rewrite, grounding), injection escaping
   graph.py         LangGraph StateGraph: the agentic workflow
   conversation.py  follow-up detection + check that a rewrite keeps the user's words
@@ -164,18 +166,21 @@ ragapp/
   factory.py       wires the real open-source models
   api.py           FastAPI: /query /search /sources /ingest /whoami /health /live /metrics
   guardrails.py    input/output rails: injection rules, secret and PII masking, guard model
-  observability.py OpenTelemetry tracing, Prometheus metrics, JSON logs
+  observability.py tracing (Phoenix via OpenTelemetry, or LangSmith), Prometheus metrics, JSON logs
   cli.py           warmup / ingest / ask / graph
 config/identities.json  demo users and roles (stand-in for SSO/OIDC group claims)
 eval/                   golden set, RAGAS judge wiring, evaluation + ablations, security evaluation
-tests/                  244 offline tests, test doubles, fake_server.py, a labelled test corpus
-ui/app.py               Streamlit chat UI
+tests/                  322 offline tests, test doubles, fake_server.py, a labelled test corpus
+ui/app.py               Streamlit chat UI (↑/↓ recall earlier questions; while answering, the send arrow becomes ■ Stop)
+ui/chat_state.py        chat history and Stop bookkeeping (no Streamlit calls, unit-tested)
 docker-compose.yml      Qdrant, Ollama, Phoenix, API, UI (+ Prometheus)
 pyproject.toml, uv.lock dependencies (runtime + dev/eval/ui groups), exact versions
 ```
 
 ## Known limitations / next steps
 
+- Docling joins the lines of a code block with spaces, and doesn't label every snippet as code. Code blocks, and paragraphs or even "headings" with at least two signs of code, get their lines and indentation back from pypdf's layout-mode text of the same page and are stored as fenced code blocks; pieces of one snippet that Docling split apart are joined into one block (if the words can't be found there, the text stays on one line).
+- Code in answers is copied, not retyped: if the model's code block matches a retrieved code block but stops early, the rest is taken from the document (`ragapp/code_answers.py`). The model picks which code; the document supplies all of it.
 - Docling needs PyTorch (about 1 GB) and takes seconds per page on a CPU; it's an optional dependency group, so CI and the Docker images parse PDFs with pypdf. Merged or rotated table cells can still come out wrong, and scanned PDFs need `RAG_DOCLING_OCR=true`.
 - Re-indexing a changed file is delete-then-insert (not atomic); at scale use versioned collections + alias swap.
 - No token streaming yet (`graph.astream(stream_mode="messages")` behind Server-Sent Events is the next step).

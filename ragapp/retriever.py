@@ -12,6 +12,7 @@ from langchain_core.documents import Document
 from langchain_core.retrievers import BaseRetriever
 
 from ragapp.query_expansion import expand_query
+from ragapp.register_lookup import asked_addresses, keep_matching
 from ragapp.reranker import FastEmbedReranker
 
 
@@ -38,11 +39,16 @@ class HybridRerankRetriever(BaseRetriever):
         ``scopes`` = classification labels the caller may see (None = all), enforced by Qdrant.
         With ``expand_queries``, both are searched and reranked with the other spellings of
         numbered terms added ("channel 1" -> "CH1"), so BM25 and the cross-encoder see the
-        words the document uses."""
+        words the document uses. A question about a register address ("register at 0x04")
+        keeps only the chunks whose heading has that address (ragapp/register_lookup.py)."""
         limit = top_k or self.top_k
         text = search_query or query
         expanded = expand_query(text) if self.expand_queries else text
-        candidates = self.store.search(expanded, k=self.candidates_k, mode=self.mode, scopes=scopes)
+        asks_address = bool(asked_addresses(f"{query} {text}"))
+        k = self.candidates_k * 3 if asks_address else self.candidates_k  # wider net, then filter
+        candidates = self.store.search(expanded, k=k, mode=self.mode, scopes=scopes)
+        if asks_address:
+            candidates = keep_matching(f"{query} {text}", candidates)
         if self.reranker is None:
             # Fusion scores are not calibrated, so there is no threshold and no refusal.
             return candidates[:limit]

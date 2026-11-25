@@ -1,6 +1,6 @@
 [project]
 name = "rag-showcase"
-version = "6.3.0"
+version = "6.6.0"
 description = "Agentic RAG on LangChain + LangGraph with RAGAS and OpenTelemetry; open-source models only"
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
@@ -22,6 +22,7 @@ dependencies = [
     "pypdf==7.1.0",
     "python-multipart==0.0.33",
     "prometheus-client==0.26.0",
+    "langsmith==0.14.17",  # optional tracing backend (RAG_TRACING_BACKEND=langsmith)
     "openinference-instrumentation-langchain==0.1.86",
     "opentelemetry-sdk==1.45.2",
     "opentelemetry-exporter-otlp-proto-http==1.45.2",

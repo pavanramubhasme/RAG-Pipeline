@@ -56,11 +56,13 @@ class RAGService:
         settings: Settings,
         llm_health: Callable[[], bool] | None = None,  # injectable for tests
         guard_llm: BaseChatModel | None = None,  # optional guard model (Granite Guardian)
+        grounding_llm: BaseChatModel | None = None,  # optional independent grounding checker
     ):
         self.store = store
         self.reranker = reranker
         self.llm = llm
         self.guard_llm = guard_llm
+        self.grounding_llm = grounding_llm
         self._llm_health = llm_health
         self.ingestor = Ingestor(store, settings)
         self.configure(settings)
@@ -97,6 +99,7 @@ class RAGService:
             guardrails=self.guardrails,
             cache=self.cache,
             embed=self.store.embeddings.embed_query,  # the search model, reused for the cache
+            grounding_llm=self.grounding_llm if settings.grounding_model else None,
         )
 
     # ------------------------------------------------------------------ ingest
@@ -249,7 +252,12 @@ class RAGService:
             "llm_model": self.settings.llm_model,
             "guardrails": self.settings.guardrails_enabled,
             "guard_model": self.settings.guard_model or None,
+            "grounding_model": (self.settings.grounding_model or self.settings.llm_model)
+            if self.settings.grounding_check
+            else None,
             "access_control": self.access is not None,
+            "tracing": obs.tracing_backend(),
+            "traces_url": obs.traces_url(self.settings),
             "cached_answers": len(self.cache) if self.cache is not None else None,
             "chunks_indexed": self.store.count() if vector_db else None,
         }

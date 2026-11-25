@@ -7,6 +7,7 @@ Every field can be overridden with an environment variable prefixed ``RAG_``
 from functools import lru_cache
 from typing import Literal
 
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -61,6 +62,10 @@ class Settings(BaseSettings):
     # --- Agentic workflow (LangGraph) ----------------------------------------------
     max_rewrites: int = 1  # retries with an LLM-rewritten query when nothing relevant is found
     grounding_check: bool = True  # LLM verifies the answer is supported by the context
+    # Who checks: empty = the answering model checks itself (lenient: it rarely spots its own
+    # additions). Another model is independent; a Granite Guardian model (e.g.
+    # granite3-guardian:2b, Apache-2.0) uses its trained "groundedness" check.
+    grounding_model: str | None = None
     # Numbers in an answer must appear in the context or the question (deterministic, no LLM).
     # refuse = answer "I don't know" instead; flag = keep the answer, grounded = false; off.
     number_check: Literal["refuse", "flag", "off"] = "refuse"
@@ -100,11 +105,21 @@ class Settings(BaseSettings):
     max_upload_mb: int = 20
     log_level: str = "INFO"
 
-    # --- Observability (OpenTelemetry) -----------------------------------------------
+    # --- Observability: traces to Phoenix (local) or LangSmith (cloud) ----------------
     tracing_enabled: bool = False
-    otlp_endpoint: str = "http://127.0.0.1:6006/v1/traces"  # Phoenix; Langfuse/Jaeger work too
+    # phoenix: OpenTelemetry/OTLP to a local, open-source Phoenix (traces never leave this
+    # machine; Langfuse, Jaeger or Tempo work too). langsmith: LangChain's hosted LangSmith
+    # (free Developer plan: 1 seat, 5k traces/month; self-hosting is Enterprise only).
+    tracing_backend: Literal["phoenix", "langsmith"] = "phoenix"
+    otlp_endpoint: str = "http://127.0.0.1:6006/v1/traces"
     otlp_headers: str | None = None  # "key1=value1,key2=value2" e.g. Langfuse auth
     service_name: str = "rag-showcase"
+    langsmith_api_key: SecretStr | None = None  # smith.langchain.com > Settings > API keys
+    langsmith_project: str = "rag-showcase"
+    langsmith_endpoint: str | None = None  # None = US cloud; EU: https://eu.api.smith.langchain.com
+    # True: questions, retrieved chunks (CONFIDENTIAL ones too) and answers are not sent;
+    # LangSmith still shows every node, its timing and errors. False: full content (demo data).
+    langsmith_hide_content: bool = True
 
 
 @lru_cache

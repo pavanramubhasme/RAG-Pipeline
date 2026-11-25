@@ -39,9 +39,17 @@ from langgraph.graph import END, START, StateGraph
 
 from ragapp import observability as obs
 from ragapp.cache import AnswerCache
+from ragapp.code_answers import complete_code
 from ragapp.config import Settings
 from ragapp.conversation import is_follow_up, keeps_user_words
-from ragapp.guardrails import BLOCKED_MESSAGE, Guardrails, unsupported_numbers
+from ragapp.guardrails import (
+    BLOCKED_MESSAGE,
+    Guardrails,
+    groundedness_messages,
+    is_guardian,
+    parse_verdict,
+    unsupported_numbers,
+)
 from ragapp.prompts import (
     ANSWER_PROMPT,
     CONTEXTUALIZE_PROMPT,
@@ -120,6 +128,7 @@ def build_graph(
     guardrails: Guardrails | None = None,
     cache: AnswerCache | None = None,
     embed: Callable[[str], list[float]] | None = None,
+    grounding_llm: BaseChatModel | None = None,
 ):
     entry = "cache_lookup" if cache is not None else "retrieve"  # first node after the guards
     finish = "cache_store" if cache is not None else END  # last node of answers and refusals
@@ -129,7 +138,9 @@ def build_graph(
         run_name="contextualize_chain"
     )
     rewrite_chain = (REWRITE_PROMPT | llm | StrOutputParser()).with_config(run_name="rewrite_chain")
-    grounding_chain = (GROUNDING_PROMPT | llm | StrOutputParser()).with_config(run_name="grounding_chain")
+    checker = grounding_llm or llm  # an independent model if configured, else the answering model
+    grounding_chain = (GROUNDING_PROMPT | checker | StrOutputParser()).with_config(run_name="grounding_chain")
+    guardian = grounding_llm is not None and is_guardian(settings.grounding_model)
 
     def input_guard(state: RAGState) -> dict:
         check = guardrails.check_input(state["question"], state.get("history"))
@@ -247,6 +258,8 @@ def build_graph(
         answer = clean_output(
             answer_chain.invoke({"context": format_context(state["documents"]), "question": _question(state)})
         )
+        # Code is copied from the passages, not retyped: a small model drops lines (code_answers.py)
+        answer = complete_code(answer, _question(state), [d.page_content for d in state["documents"]])
         if is_refusal(answer) or settings.number_check == "off":
             return {"answer": answer, "refused": is_refusal(answer)}
         sources = [d.page_content for d in state["documents"]] + [state["question"], _question(state)]
@@ -270,12 +283,14 @@ def build_graph(
             return {"grounded": None}
         if state.get("unsupported_numbers"):  # already known to be unsupported: no LLM call needed
             return {"grounded": False}
+        context = format_context(state["documents"])
         try:
-            verdict = clean_output(
-                grounding_chain.invoke(
-                    {"context": format_context(state["documents"]), "answer": state["answer"]}
+            if guardian:  # trained check: "is the answer NOT grounded in the context?" yes = risk
+                reply = grounding_llm.invoke(
+                    groundedness_messages(context, state["answer"]), config={"run_name": "groundedness_guard"}
                 )
-            )
+                return {"grounded": not parse_verdict(str(reply.content))}
+            verdict = clean_output(grounding_chain.invoke({"context": context, "answer": state["answer"]}))
         except Exception as exc:  # keep the answer, report the check as "not performed"
             logger.warning("grounding_check_failed", extra={"error": str(exc)[:200]})
             return {"grounded": None}
