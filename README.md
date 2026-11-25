@@ -1,4 +1,4 @@
-# RAG Showcase v6 — secure agentic RAG with LangChain, LangGraph, RAGAS and OpenTelemetry
+# RAG Pipeline — secure agentic RAG with LangChain, LangGraph, RAGAS and OpenTelemetry
 
 Ask questions about your documents and get grounded, cited answers, or an honest *"I don't know"*. Every model is free and open source and runs on your machine: no API keys, no data leaves the laptop.
 
